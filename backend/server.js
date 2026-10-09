@@ -11,7 +11,6 @@ const PORT = process.env.PORT || 5000;
 const PYTHON_PATH = process.env.PYTHON_PATH || 'python';
 const SCRIPT_PATH = path.join(__dirname, 'predict_service.py');
 
-// Helper to run python script
 function runPython(args) {
     return new Promise((resolve, reject) => {
         const pyProcess = spawn(PYTHON_PATH, [SCRIPT_PATH, ...args]);
@@ -50,33 +49,32 @@ app.get('/api/analytics', async (req, res) => {
     }
 });
 
+// GET /api/products?query=SEARCH_TERM
+app.get('/api/products', async (req, res) => {
+    try {
+        const q = req.query.query || '';
+        const data = await runPython(['products_search', q]);
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/recommend (Pure Apriori Basket Recommendation)
+app.post('/api/recommend', async (req, res) => {
+    try {
+        const payload = JSON.stringify(req.body);
+        const data = await runPython(['recommend_basket', payload]);
+        res.json({ success: true, recommendations: data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // GET /api/customers
 app.get('/api/customers', async (req, res) => {
     try {
         const data = await runPython(['customers']);
-        res.json({ success: true, data });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// GET /api/customers/:id
-app.get('/api/customers/:id', async (req, res) => {
-    try {
-        const data = await runPython(['customer_detail', req.params.id]);
-        if (data.error) {
-            return res.status(404).json({ success: false, error: data.error });
-        }
-        res.json({ success: true, data });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// GET /api/customers/:id/recommendations
-app.get('/api/customers/:id/recommendations', async (req, res) => {
-    try {
-        const data = await runPython(['recommendations', req.params.id]);
         res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -96,4 +94,3 @@ app.get('/api/rules', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Backend server running on http://localhost:${PORT}`);
 });
-

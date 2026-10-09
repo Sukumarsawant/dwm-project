@@ -37,3 +37,6 @@ frontend/build/
 
 # Large raw dataset file (keep cleaned dataset in data/)
 online+retail/
+
+# Ignore reference repository
+ref/
