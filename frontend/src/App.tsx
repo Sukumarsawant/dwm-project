@@ -52,10 +52,10 @@ export default function App() {
   const [selectedSegmentFilter, setSelectedSegmentFilter] = useState<string>('All');
   const [dateRangeFilter, setDateRangeFilter] = useState<'all' | '2011' | 'h2_2011'>('all');
 
-  // Search & Basket State for Recommender
+  // Search & Basket State for Recommender (Supports Item Quantities / Multiple Buys)
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<string[]>([]);
-  const [selectedBasket, setSelectedBasket] = useState<string[]>([]);
+  const [basketQuantities, setBasketQuantities] = useState<Record<string, number>>({});
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [loadingRecs, setLoadingRecs] = useState(false);
@@ -147,17 +147,39 @@ export default function App() {
     }
   };
 
-  const addToBasket = (prod: string) => {
-    if (!selectedBasket.includes(prod)) {
-      setSelectedBasket((prev) => [...prev, prod]);
-    }
+  const selectedBasket = Object.keys(basketQuantities);
+  const totalBasketItemCount = Object.values(basketQuantities).reduce((acc, count) => acc + count, 0);
+
+  const addToBasket = (prod: string, qty = 1) => {
+    setBasketQuantities((prev) => ({
+      ...prev,
+      [prod]: (prev[prod] || 0) + qty
+    }));
     setQuery('');
     setSearchResults([]);
     setIsCheckedOut(false);
   };
 
+  const decrementBasketItem = (prod: string) => {
+    setBasketQuantities((prev) => {
+      const current = prev[prod] || 0;
+      if (current <= 1) {
+        const copy = { ...prev };
+        delete copy[prod];
+        return copy;
+      }
+      return { ...prev, [prod]: current - 1 };
+    });
+    setRecommendations([]);
+    setIsCheckedOut(false);
+  };
+
   const removeFromBasket = (prod: string) => {
-    setSelectedBasket(selectedBasket.filter((p) => p !== prod));
+    setBasketQuantities((prev) => {
+      const copy = { ...prev };
+      delete copy[prod];
+      return copy;
+    });
     setRecommendations([]);
     setIsCheckedOut(false);
   };
@@ -288,8 +310,8 @@ export default function App() {
         <div className="amz-nav-right">
           <div className="amz-cart-widget" onClick={() => setActiveTab('recommender')}>
             <span className="cart-icon">🛒</span>
-            <span className="cart-count">{selectedBasket.length}</span>
-            <span className="cart-text">Basket</span>
+            <span className="cart-count">{totalBasketItemCount}</span>
+            <span className="cart-text">Cart ({totalBasketItemCount})</span>
           </div>
         </div>
       </header>
@@ -472,7 +494,7 @@ export default function App() {
                     onClick={() => setActiveTab('recommender')}
                     style={{ padding: '8px 16px', fontSize: '13px' }}
                   >
-                    🛒 View Cart ({selectedBasket.length}) & Checkout
+                    🛒 View Cart ({totalBasketItemCount} {totalBasketItemCount === 1 ? 'item' : 'items'}) & Checkout
                   </button>
                 </div>
               </div>
@@ -544,7 +566,7 @@ export default function App() {
                 <>
                   <div className="amz-products-grid">
                     {marketplaceProducts.map((p, idx) => {
-                      const inCart = selectedBasket.includes(p.description);
+                      const qtyInCart = basketQuantities[p.description] || 0;
                       const isBestseller = p.orders_count >= 500;
                       return (
                         <div key={idx} className="amz-product-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -582,13 +604,43 @@ export default function App() {
                               <span style={{ fontSize: '11px', color: '#059669', fontWeight: 600 }}>In Stock (Verified)</span>
                             </div>
 
-                            <button
-                              className={`toggle-btn ${inCart ? '' : 'active'}`}
-                              onClick={() => inCart ? removeFromBasket(p.description) : addToBasket(p.description)}
-                              style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px', borderRadius: '4px' }}
-                            >
-                              {inCart ? '✓ Added in Cart (Click to Remove)' : '➕ Add to Cart'}
-                            </button>
+                            {qtyInCart > 0 ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: '#f8fafc', padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <button
+                                    onClick={() => decrementBasketItem(p.description)}
+                                    style={{ width: '28px', height: '28px', borderRadius: '4px', border: '1px solid #94a3b8', background: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Decrease quantity"
+                                  >
+                                    -
+                                  </button>
+                                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#0f172a', minWidth: '40px', textAlign: 'center' }}>
+                                    {qtyInCart} in Cart
+                                  </span>
+                                  <button
+                                    onClick={() => addToBasket(p.description)}
+                                    style={{ width: '28px', height: '28px', borderRadius: '4px', border: '1px solid #94a3b8', background: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Add one more"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <button
+                                  onClick={() => removeFromBasket(p.description)}
+                                  style={{ border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                className="toggle-btn active"
+                                onClick={() => addToBasket(p.description)}
+                                style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px', borderRadius: '4px' }}
+                              >
+                                ➕ Add to Cart
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -1228,10 +1280,10 @@ export default function App() {
 
               <div className="amz-card" style={{ marginBottom: '25px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3>🛒 Shopping Cart ({selectedBasket.length} {selectedBasket.length === 1 ? 'item' : 'items'})</h3>
+                  <h3>🛒 Shopping Cart ({totalBasketItemCount} {totalBasketItemCount === 1 ? 'total item' : 'total items'} · {selectedBasket.length} unique)</h3>
                   {selectedBasket.length > 0 && (
                     <button
-                      onClick={() => { setSelectedBasket([]); setRecommendations([]); setIsCheckedOut(false); }}
+                      onClick={() => { setBasketQuantities({}); setRecommendations([]); setIsCheckedOut(false); }}
                       style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
                     >
                       Clear Cart
@@ -1241,17 +1293,45 @@ export default function App() {
 
                 {selectedBasket.length === 0 ? (
                   <div className="empty-msg" style={{ marginTop: '12px' }}>
-                    Your shopping cart is currently empty. Use the search bar at the top to add products.
+                    Your shopping cart is currently empty. Use the search bar at the top or the <strong>Marketplace</strong> tab to add products.
                   </div>
                 ) : (
                   <>
                     <div className="chips-row" style={{ marginTop: '12px' }}>
-                      {selectedBasket.map((item, idx) => (
-                        <div key={idx} className="amz-chip">
-                          <span>{item}</span>
-                          <button onClick={() => removeFromBasket(item)}>✕</button>
-                        </div>
-                      ))}
+                      {selectedBasket.map((item, idx) => {
+                        const qty = basketQuantities[item] || 1;
+                        return (
+                          <div key={idx} className="amz-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                            <span><strong>{item}</strong></span>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fed7aa', padding: '1px 6px', borderRadius: '12px' }}>
+                              <button
+                                onClick={() => decrementBasketItem(item)}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', fontWeight: 800, fontSize: '13px', color: '#c2410c' }}
+                                title="Decrease quantity"
+                              >
+                                -
+                              </button>
+                              <span style={{ fontWeight: 800, fontSize: '11px', color: '#7c2d12', padding: '0 2px' }}>
+                                × {qty}
+                              </span>
+                              <button
+                                onClick={() => addToBasket(item)}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', fontWeight: 800, fontSize: '13px', color: '#c2410c' }}
+                                title="Increase quantity"
+                              >
+                                +
+                              </button>
+                            </div>
+                            <button
+                              onClick={() => removeFromBasket(item)}
+                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#991b1b', fontWeight: 800, fontSize: '13px', marginLeft: '4px' }}
+                              title="Remove item"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     <div style={{ marginTop: '20px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
