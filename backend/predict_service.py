@@ -31,20 +31,19 @@ def format_product_list(prods):
         return f"{prods[0]} and {prods[1]}"
     return ", ".join(prods[:-1]) + f", and {prods[-1]}"
 
-def build_explanation(antecedents, recommended_products, confidence, lift):
+def build_explanation(antecedents, recommended_products, confidence, support):
     ant_text = format_product_list(antecedents)
     rec_text = format_product_list(recommended_products)
     conf_pct = confidence * 100
+    supp_pct = support * 100
     rec_phrase = f"{rec_text}" if len(recommended_products) == 1 else f"{rec_text} together"
 
     return (
         f"Customers who purchased {ant_text} frequently also bought {rec_phrase}. "
-        f"Confidence of {conf_pct:.1f}% indicates strong transaction pairing, "
-        f"and a Lift of {lift:.2f}x proves this item combination occurs significantly "
-        f"more often than random chance."
+        f"Confidence of {conf_pct:.1f}% and Support of {supp_pct:.2f}% indicate strong transaction co-occurrence."
     )
 
-def recommend_products_apriori(selected_products, min_support=0.0, min_confidence=0.0, min_lift=0.0, top_n=10):
+def recommend_products_apriori(selected_products, min_support=0.0, min_confidence=0.0, top_n=10):
     selected_set = set(selected_products)
     recommendations = []
     
@@ -63,9 +62,8 @@ def recommend_products_apriori(selected_products, min_support=0.0, min_confidenc
 
         support = float(row["support"])
         confidence = float(row["confidence"])
-        lift = float(row["lift"])
 
-        if confidence < min_confidence or lift < min_lift or support < min_support:
+        if confidence < min_confidence or support < min_support:
             continue
 
         rec_text = " + ".join(cons_list)
@@ -77,8 +75,7 @@ def recommend_products_apriori(selected_products, min_support=0.0, min_confidenc
             "matched_rule": matched_rule,
             "support": round(support, 4),
             "confidence": round(confidence, 4),
-            "lift": round(lift, 4),
-            "explanation": build_explanation(ants_list, cons_list, confidence, lift)
+            "explanation": build_explanation(ants_list, cons_list, confidence, support)
         })
 
     if not recommendations:
@@ -86,7 +83,7 @@ def recommend_products_apriori(selected_products, min_support=0.0, min_confidenc
 
     res_df = pd.DataFrame(recommendations)
     res_df = res_df.drop_duplicates(subset=["recommended_product"])
-    res_df = res_df.sort_values(by=["lift", "confidence", "support"], ascending=False)
+    res_df = res_df.sort_values(by=["confidence", "support"], ascending=False)
     return res_df.head(top_n).to_dict(orient="records")
 
 if __name__ == "__main__":
@@ -102,14 +99,12 @@ if __name__ == "__main__":
         selected_prods = payload.get("products", [])
         min_supp = float(payload.get("min_support", 0.0))
         min_conf = float(payload.get("min_confidence", 0.0))
-        min_lift = float(payload.get("min_lift", 0.0))
         top_n = int(payload.get("top_n", 10))
 
         recs = recommend_products_apriori(
             selected_products=selected_prods,
             min_support=min_supp,
             min_confidence=min_conf,
-            min_lift=min_lift,
             top_n=top_n
         )
         print(json.dumps(recs))
@@ -162,6 +157,82 @@ if __name__ == "__main__":
             'CustomerID': 'count'
         }).reset_index().to_dict(orient='records')
 
+        # Quarterly Revenue Trend
+        df['Quarter'] = df['InvoiceDate'].dt.to_period('Q').astype(str)
+        quarterly = df.groupby('Quarter').agg(
+            revenue=('TotalAmount', 'sum'),
+            orders=('InvoiceNo', 'nunique')
+        ).reset_index().to_dict(orient='records')
+
+        # Price Range Breakdown
+        price_bins = [0, 1, 2, 5, 10, 50, 100000]
+        price_labels = ['£0 - £1', '£1 - £2', '£2 - £5', '£5 - £10', '£10 - £50', '£50+']
+        df['PriceRange'] = pd.cut(df['UnitPrice'], bins=price_bins, labels=price_labels)
+        price_dist = df.groupby('PriceRange', observed=False)['InvoiceNo'].count().to_dict()
+
+        # Regional Breakdown: UK vs International
+        uk_rev = float(df[df['Country'] == 'United Kingdom']['TotalAmount'].sum())
+        intl_rev = float(df[df['Country'] != 'United Kingdom']['TotalAmount'].sum())
+        regional_distribution = {
+            "United Kingdom": round(uk_rev, 2),
+            "International": round(intl_rev, 2)
+        }
+
+        # Top 5 Customers by Revenue
+        top_customers = customers.sort_values(by='Monetary', ascending=False).head(5).to_dict(orient='records')
+
+        # Scatter Plot Data (Representative sample of 300 customers for K-Means Recency vs Monetary)
+        scatter_sample = customers.sample(n=min(300, len(customers)), random_state=42)[
+            ['CustomerID', 'Recency', 'Frequency', 'Monetary', 'Cluster', 'Segment_Name']
+        ].copy()
+        scatter_sample['Monetary'] = scatter_sample['Monetary'].round(2)
+        scatter_sample['Recency'] = scatter_sample['Recency'].astype(int)
+        scatter_sample['Frequency'] = scatter_sample['Frequency'].astype(int)
+        scatter_data = scatter_sample.to_dict(orient='records')
+
+        # Product Categorization for Treemap & Stacked Column
+        def assign_category(desc):
+            if not isinstance(desc, str):
+                return 'Stationery & Accessories'
+            d = desc.upper()
+            if any(k in d for k in ['HEART', 'LIGHT', 'DECOR', 'FRAME', 'SIGN', 'CLOCK', 'CANDLE', 'LANTERN', 'MIRROR', 'WALL', 'WOOD']):
+                return 'Home & Decor'
+            elif any(k in d for k in ['BAG', 'LUNCH', 'BOX', 'TOTE', 'CASE', 'STORAGE', 'BASKET', 'CONTAINER']):
+                return 'Bags & Storage'
+            elif any(k in d for k in ['MUG', 'CUP', 'TEA', 'COFFEE', 'BOWL', 'PLATE', 'JAR', 'BOTTLE', 'CUTLERY', 'BAKING']):
+                return 'Kitchen & Dining'
+            elif any(k in d for k in ['TOY', 'GAME', 'PLUSH', 'CHILD', 'DOLL', 'PUZZLE', 'PLAYING']):
+                return 'Toys & Novelty'
+            elif any(k in d for k in ['CHRISTMAS', 'XMAS', 'BIRTHDAY', 'GIFT', 'WRAP', 'CARD', 'RIBBON', 'EASTER']):
+                return 'Seasonal & Gifts'
+            return 'Stationery & Accessories'
+
+        df['Category'] = df['Description'].apply(assign_category)
+
+        # Treemap / Category Contribution
+        cat_agg = df.groupby('Category').agg(
+            revenue=('TotalAmount', 'sum'),
+            items_sold=('Quantity', 'sum')
+        ).reset_index()
+        cat_agg['revenue'] = cat_agg['revenue'].round(2)
+        category_contributions = cat_agg.to_dict(orient='records')
+
+        # Stacked Column: Monthly Sales by Category
+        df['Month'] = df['InvoiceDate'].dt.to_period('M').astype(str)
+        pivot_monthly = df.pivot_table(index='Month', columns='Category', values='TotalAmount', aggfunc='sum', fill_value=0).round(2).reset_index()
+        stacked_category_monthly = pivot_monthly.to_dict(orient='records')
+
+        # Detailed Country Matrix (Orders, Customers, Revenue, Avg Order Value, Items Sold)
+        country_matrix = df.groupby('Country').agg(
+            revenue=('TotalAmount', 'sum'),
+            orders=('InvoiceNo', 'nunique'),
+            customers=('CustomerID', 'nunique'),
+            items_sold=('Quantity', 'sum')
+        ).reset_index()
+        country_matrix['revenue'] = country_matrix['revenue'].round(2)
+        country_matrix['aov'] = (country_matrix['revenue'] / country_matrix['orders']).round(2)
+        country_matrix = country_matrix.sort_values(by='revenue', ascending=False).to_dict(orient='records')
+
         metrics = {
             "total_customers": int(customers['CustomerID'].nunique()),
             "total_products": int(products_df['stock_code'].nunique()),
@@ -171,11 +242,19 @@ if __name__ == "__main__":
             "cluster_distribution": customers['Segment_Name'].value_counts().to_dict(),
             "rfm_cluster_means": rfm_cluster_means,
             "monthly_trend": monthly,
+            "quarterly_trend": quarterly,
+            "price_distribution": price_dist,
+            "regional_distribution": regional_distribution,
             "country_distribution": countries,
             "top_products": top_products,
+            "top_customers": top_customers,
             "hourly_distribution": hourly_list,
             "day_distribution": day_list,
-            "basket_size_distribution": basket_dist
+            "basket_size_distribution": basket_dist,
+            "scatter_data": scatter_data,
+            "category_contributions": category_contributions,
+            "stacked_category_monthly": stacked_category_monthly,
+            "country_matrix": country_matrix
         }
         print(json.dumps(metrics))
 
