@@ -94,6 +94,31 @@ if __name__ == "__main__":
         matches = products_df[products_df['description'].str.lower().str.contains(q, na=False)]
         print(matches.head(15)['description'].to_json(orient='values'))
 
+    elif action == "marketplace_catalog":
+        # Returns catalog items with price, category, and sales popularity
+        cat_filter = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != "All" else ""
+        q = sys.argv[3].lower() if len(sys.argv) > 3 else ""
+
+        def quick_cat(desc):
+            if not isinstance(desc, str): return 'Accessories'
+            d = desc.upper()
+            if any(k in d for k in ['HEART', 'LIGHT', 'DECOR', 'FRAME', 'SIGN', 'CLOCK', 'CANDLE', 'LANTERN', 'MIRROR']): return 'Home & Decor'
+            elif any(k in d for k in ['BAG', 'LUNCH', 'BOX', 'TOTE', 'CASE', 'STORAGE', 'BASKET']): return 'Bags & Storage'
+            elif any(k in d for k in ['MUG', 'CUP', 'TEA', 'COFFEE', 'BOWL', 'PLATE', 'JAR', 'BOTTLE']): return 'Kitchen & Dining'
+            elif any(k in d for k in ['TOY', 'GAME', 'PLUSH', 'CHILD', 'DOLL', 'PUZZLE']): return 'Toys & Novelty'
+            elif any(k in d for k in ['CHRISTMAS', 'XMAS', 'BIRTHDAY', 'GIFT', 'WRAP', 'CARD']): return 'Seasonal & Gifts'
+            return 'Stationery & Accessories'
+
+        cat_df = products_df.copy()
+        cat_df['category'] = cat_df['description'].apply(quick_cat)
+
+        if cat_filter:
+            cat_df = cat_df[cat_df['category'] == cat_filter]
+        if q:
+            cat_df = cat_df[cat_df['description'].str.lower().str.contains(q, na=False)]
+
+        print(cat_df.head(60).to_json(orient='records'))
+
     elif action == "recommend_basket":
         payload = json.loads(sys.argv[2])
         selected_prods = payload.get("products", [])

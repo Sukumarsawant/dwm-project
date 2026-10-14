@@ -60,6 +60,18 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
+// GET /api/marketplace?category=CAT&query=Q
+app.get('/api/marketplace', async (req, res) => {
+    try {
+        const cat = req.query.category || 'All';
+        const q = req.query.query || '';
+        const data = await runPython(['marketplace_catalog', cat, q]);
+        res.json({ success: true, products: data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // POST /api/recommend (Pure Apriori Basket Recommendation)
 app.post('/api/recommend', async (req, res) => {
     try {

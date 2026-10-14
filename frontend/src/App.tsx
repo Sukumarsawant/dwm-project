@@ -33,7 +33,13 @@ const CLUSTER_COLORS: { [key: string]: string } = {
 const CATEGORY_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'recommender' | 'clusters' | 'rules'>('analytics');
+  const [activeTab, setActiveTab] = useState<'marketplace' | 'analytics' | 'recommender' | 'clusters' | 'rules'>('marketplace');
+
+  // Marketplace State
+  const [marketplaceProducts, setMarketplaceProducts] = useState<any[]>([]);
+  const [marketCategory, setMarketCategory] = useState<string>('All');
+  const [marketSearch, setMarketSearch] = useState<string>('');
+  const [loadingMarket, setLoadingMarket] = useState<boolean>(false);
 
   // Interactive PowerBI Filter Slicers
   const [metricView, setMetricView] = useState<'revenue' | 'orders'>('revenue');
@@ -68,10 +74,26 @@ export default function App() {
   const rulesPerPage = 15;
 
   useEffect(() => {
+    fetchMarketplace('All', '');
     fetchAnalytics();
     fetchCustomers();
     fetchRules();
   }, []);
+
+  const fetchMarketplace = async (category = marketCategory, search = marketSearch) => {
+    setLoadingMarket(true);
+    try {
+      const res = await fetch(`${API_BASE}/marketplace?category=${encodeURIComponent(category)}&query=${encodeURIComponent(search)}`);
+      const data = await res.json();
+      if (data.success) {
+        setMarketplaceProducts(data.products || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingMarket(false);
+    }
+  };
 
   const fetchAnalytics = async () => {
     try {
@@ -271,6 +293,12 @@ export default function App() {
           <div className="sidebar-group">
             <div className="sidebar-title">NAVIGATION MENU</div>
             <button
+              className={`sidebar-link ${activeTab === 'marketplace' ? 'active' : ''}`}
+              onClick={() => setActiveTab('marketplace')}
+            >
+              <span className="icon">🏪</span> Marketplace Store
+            </button>
+            <button
               className={`sidebar-link ${activeTab === 'analytics' ? 'active' : ''}`}
               onClick={() => setActiveTab('analytics')}
             >
@@ -423,6 +451,100 @@ export default function App() {
 
         {/* Main Content Workspace */}
         <main className="amz-content">
+          {/* VIEW 0: PROPER E-COMMERCE MARKETPLACE STORE */}
+          {activeTab === 'marketplace' && (
+            <div className="content-view">
+              <div className="view-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
+                <div>
+                  <h2>🏪 Retail Store Marketplace</h2>
+                  <p>Browse catalog products by category, inspect prices, and add items directly to your cart to prepare for Apriori basket mining.</p>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <button
+                    className="amz-btn-gold"
+                    onClick={() => setActiveTab('recommender')}
+                    style={{ padding: '8px 16px', fontSize: '13px' }}
+                  >
+                    🛒 View Cart ({selectedBasket.length}) & Checkout
+                  </button>
+                </div>
+              </div>
+
+              {/* Category Filter Pills & Search */}
+              <div className="amz-card" style={{ marginBottom: '20px', padding: '14px 18px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#475569' }}>Category:</span>
+                    {['All', 'Home & Decor', 'Bags & Storage', 'Kitchen & Dining', 'Toys & Novelty', 'Seasonal & Gifts', 'Stationery & Accessories'].map((cat) => (
+                      <button
+                        key={cat}
+                        className={`btn-pill ${marketCategory === cat ? 'active' : ''}`}
+                        onClick={() => {
+                          setMarketCategory(cat);
+                          fetchMarketplace(cat, marketSearch);
+                        }}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', minWidth: '240px' }}>
+                    <input
+                      type="text"
+                      placeholder="Filter store items..."
+                      value={marketSearch}
+                      onChange={(e) => {
+                        setMarketSearch(e.target.value);
+                        fetchMarketplace(marketCategory, e.target.value);
+                      }}
+                      style={{ padding: '6px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Product Grid */}
+              {loadingMarket ? (
+                <div className="loading-box">Loading marketplace catalog...</div>
+              ) : marketplaceProducts.length === 0 ? (
+                <div className="warning-box">No products found matching the selected category/search.</div>
+              ) : (
+                <div className="amz-products-grid">
+                  {marketplaceProducts.map((p, idx) => {
+                    const inCart = selectedBasket.includes(p.description);
+                    return (
+                      <div key={idx} className="amz-product-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <span className="card-badge">{p.category || 'RETAIL ITEM'}</span>
+                            <span style={{ fontSize: '11px', color: '#94a3b8' }}>#{p.stock_code}</span>
+                          </div>
+                          <h4 className="prod-name" style={{ minHeight: '40px', fontSize: '14px', lineHeight: '1.3' }}>{p.description}</h4>
+                        </div>
+
+                        <div style={{ marginTop: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
+                            <span style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>£{Number(p.unit_price).toFixed(2)}</span>
+                            <span style={{ fontSize: '11px', color: '#059669', fontWeight: 600 }}>In Stock (Verified)</span>
+                          </div>
+
+                          <button
+                            className={`toggle-btn ${inCart ? '' : 'active'}`}
+                            onClick={() => inCart ? removeFromBasket(p.description) : addToBasket(p.description)}
+                            style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px', borderRadius: '4px' }}
+                          >
+                            {inCart ? '✓ Added in Cart (Click to Remove)' : '➕ Add to Cart'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* VIEW 1: POWERBI STYLE EXECUTIVE ANALYTICAL DASHBOARD */}
           {activeTab === 'analytics' && analytics && (
             <div className="content-view">
