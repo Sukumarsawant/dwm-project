@@ -262,4 +262,4 @@ if __name__ == "__main__":
         print(customers.to_json(orient='records'))
 
     elif action == "rules":
-        print(apriori_rules.head(100).to_json(orient='records'))
+        print(apriori_rules.to_json(orient='records'))
