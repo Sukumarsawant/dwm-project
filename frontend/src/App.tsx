@@ -49,6 +49,7 @@ export default function App() {
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [loadingRecs, setLoadingRecs] = useState(false);
+  const [isCheckedOut, setIsCheckedOut] = useState(false);
 
   // Apriori Threshold Sliders (Support & Confidence)
   const [minSupport, setMinSupport] = useState<number>(0.015);
@@ -119,23 +120,24 @@ export default function App() {
 
   const addToBasket = (prod: string) => {
     if (!selectedBasket.includes(prod)) {
-      setSelectedBasket([...selectedBasket, prod]);
+      setSelectedBasket((prev) => [...prev, prod]);
     }
     setQuery('');
     setSearchResults([]);
-    setRecommendations([]);
-    setHasSearched(false);
+    setIsCheckedOut(false);
   };
 
   const removeFromBasket = (prod: string) => {
     setSelectedBasket(selectedBasket.filter((p) => p !== prod));
     setRecommendations([]);
-    setHasSearched(false);
+    setIsCheckedOut(false);
   };
 
-  const handleGetRecommendations = async () => {
+  // Automatically fetch recommendations when entering checkout mode
+  const handleProceedToCheckout = async () => {
     if (selectedBasket.length === 0) return;
 
+    setIsCheckedOut(true);
     setLoadingRecs(true);
     setHasSearched(true);
     try {
@@ -278,7 +280,7 @@ export default function App() {
               className={`sidebar-link ${activeTab === 'recommender' ? 'active' : ''}`}
               onClick={() => setActiveTab('recommender')}
             >
-              <span className="icon">🛍️</span> Apriori Recommender
+              <span className="icon">🛒</span> Shopping Cart & Checkout
             </button>
             <button
               className={`sidebar-link ${activeTab === 'clusters' ? 'active' : ''}`}
@@ -971,49 +973,68 @@ export default function App() {
               </div>
 
               <div className="amz-card" style={{ marginBottom: '25px' }}>
-                <h3>🛒 Active Basket Items ({selectedBasket.length})</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3>🛒 Shopping Cart ({selectedBasket.length} {selectedBasket.length === 1 ? 'item' : 'items'})</h3>
+                  {selectedBasket.length > 0 && (
+                    <button
+                      onClick={() => { setSelectedBasket([]); setRecommendations([]); setIsCheckedOut(false); }}
+                      style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Clear Cart
+                    </button>
+                  )}
+                </div>
+
                 {selectedBasket.length === 0 ? (
-                  <div className="empty-msg">
-                    Your basket is currently empty. Use the top Amazon search bar to add products.
+                  <div className="empty-msg" style={{ marginTop: '12px' }}>
+                    Your shopping cart is currently empty. Use the search bar at the top to add products.
                   </div>
                 ) : (
-                  <div className="chips-row">
-                    {selectedBasket.map((item, idx) => (
-                      <div key={idx} className="amz-chip">
-                        <span>{item}</span>
-                        <button onClick={() => removeFromBasket(item)}>✕</button>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    <div className="chips-row" style={{ marginTop: '12px' }}>
+                      {selectedBasket.map((item, idx) => (
+                        <div key={idx} className="amz-chip">
+                          <span>{item}</span>
+                          <button onClick={() => removeFromBasket(item)}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ marginTop: '20px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        className="amz-btn-gold"
+                        disabled={selectedBasket.length === 0 || loadingRecs}
+                        onClick={handleProceedToCheckout}
+                        style={{ fontSize: '14px', padding: '10px 22px', fontWeight: 700 }}
+                      >
+                        {loadingRecs ? 'Analyzing Basket...' : '💳 Proceed to Checkout (Get Auto-Recommendations)'}
+                      </button>
+                      {isCheckedOut && (
+                        <span style={{ color: '#059669', fontSize: '13px', fontWeight: 600 }}>
+                          ✅ Checkout mode active — Auto-recommendations generated below!
+                        </span>
+                      )}
+                    </div>
+                  </>
                 )}
-
-                <div style={{ marginTop: '20px' }}>
-                  <button
-                    className="amz-btn-gold"
-                    disabled={selectedBasket.length === 0 || loadingRecs}
-                    onClick={handleGetRecommendations}
-                  >
-                    {loadingRecs ? 'Mining Apriori Rules...' : '⚡ Get Recommendations'}
-                  </button>
-                </div>
               </div>
 
-              {/* Recommendation Results */}
+              {/* Recommendation Results (Displayed automatically upon Proceed to Checkout) */}
               <div className="view-header">
-                <h3>Recommended Items ("Customers who bought this also bought...")</h3>
+                <h3>Recommended Add-ons ("Customers who bought your cart items also bought...")</h3>
               </div>
 
-              {loadingRecs && <div className="loading-box">Running Apriori basket rule search...</div>}
+              {loadingRecs && <div className="loading-box">Running Apriori basket rule inference...</div>}
 
-              {!loadingRecs && !hasSearched && (
+              {!loadingRecs && !isCheckedOut && selectedBasket.length > 0 && (
                 <div className="info-box">
-                  Select products above and click <strong>Get Recommendations</strong>.
+                  Review your items above and click <strong>Proceed to Checkout</strong> to automatically discover complementary pairing recommendations.
                 </div>
               )}
 
-              {!loadingRecs && hasSearched && recommendations.length === 0 && (
+              {!loadingRecs && isCheckedOut && recommendations.length === 0 && (
                 <div className="warning-box">
-                  No Apriori rules passed the threshold settings (Min Support: {(minSupport * 100).toFixed(1)}%, Min Confidence: {(minConfidence * 100).toFixed(1)}%). Try relaxing the sidebar sliders.
+                  No Apriori pairing rules passed the active threshold settings (Min Support: {(minSupport * 100).toFixed(1)}%, Min Confidence: {(minConfidence * 100).toFixed(1)}%). Try relaxing the sliders in the sidebar.
                 </div>
               )}
 
