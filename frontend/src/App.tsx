@@ -245,9 +245,9 @@ export default function App() {
                 <div
                   key={idx}
                   className="amz-dropdown-item"
-                  onClick={() => { addToBasket(item); setActiveTab('recommender'); }}
+                  onClick={() => { addToBasket(item); }}
                 >
-                  ➕ Add to Basket: <strong>{item}</strong>
+                  ➕ Add to Cart: <strong>{item}</strong>
                 </div>
               ))}
             </div>
@@ -1031,6 +1031,18 @@ export default function App() {
                       </div>
 
                       <div className="rule-string">Rule: {rec.matched_rule}</div>
+
+                      <div style={{ marginTop: '8px' }}>
+                        <button
+                          className="toggle-btn active"
+                          style={{ width: '100%', padding: '6px 10px', fontSize: '12px' }}
+                          onClick={() => {
+                            (rec.recommended_products || [rec.recommended_product]).forEach((p: string) => addToBasket(p));
+                          }}
+                        >
+                          🛒 Add Recommended to Cart
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
