@@ -14,6 +14,14 @@ df = pd.read_csv(DATA_PATH)
 apriori_rules = pd.read_csv(RULES_PATH)
 customers = pd.read_csv(CUST_PATH)
 products_df = pd.read_csv(PROD_PATH)
+# Precompute product popularity metrics (orders_count and total_quantity)
+pop_stats = df.groupby('Description').agg(
+    orders_count=('InvoiceNo', 'nunique'),
+    total_quantity=('Quantity', 'sum')
+).reset_index()
+products_df = products_df.merge(pop_stats, left_on='description', right_on='Description', how='left')
+products_df['orders_count'] = products_df['orders_count'].fillna(1).astype(int)
+products_df['total_quantity'] = products_df['total_quantity'].fillna(1).astype(int)
 
 CLUSTER_NAMES = {
     0: "VIP / High-Value Champions",
@@ -95,12 +103,15 @@ if __name__ == "__main__":
         print(matches.head(15)['description'].to_json(orient='values'))
 
     elif action == "marketplace_catalog":
-        # Returns catalog items with price, category, and sales popularity
+        # Returns catalog items with price, category, sales popularity, and pagination
         cat_filter = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != "All" else ""
         q = sys.argv[3].lower() if len(sys.argv) > 3 else ""
+        sort_by = sys.argv[4] if len(sys.argv) > 4 else "popular"
+        page = int(sys.argv[5]) if len(sys.argv) > 5 else 1
+        limit = int(sys.argv[6]) if len(sys.argv) > 6 else 20
 
         def quick_cat(desc):
-            if not isinstance(desc, str): return 'Accessories'
+            if not isinstance(desc, str): return 'Stationery & Accessories'
             d = desc.upper()
             if any(k in d for k in ['HEART', 'LIGHT', 'DECOR', 'FRAME', 'SIGN', 'CLOCK', 'CANDLE', 'LANTERN', 'MIRROR']): return 'Home & Decor'
             elif any(k in d for k in ['BAG', 'LUNCH', 'BOX', 'TOTE', 'CASE', 'STORAGE', 'BASKET']): return 'Bags & Storage'
@@ -117,7 +128,30 @@ if __name__ == "__main__":
         if q:
             cat_df = cat_df[cat_df['description'].str.lower().str.contains(q, na=False)]
 
-        print(cat_df.head(60).to_json(orient='records'))
+        # Sorting: most popular (highest order frequency), price low-to-high, price high-to-low
+        if sort_by == "popular":
+            cat_df = cat_df.sort_values(by="orders_count", ascending=False)
+        elif sort_by == "price_asc":
+            cat_df = cat_df.sort_values(by="unit_price", ascending=True)
+        elif sort_by == "price_desc":
+            cat_df = cat_df.sort_values(by="unit_price", ascending=False)
+        elif sort_by == "name":
+            cat_df = cat_df.sort_values(by="description", ascending=True)
+
+        total_count = len(cat_df)
+        total_pages = max(1, int(np.ceil(total_count / limit)))
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_items = cat_df.iloc[start_idx:end_idx].to_dict(orient='records')
+
+        result = {
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "current_page": page,
+            "limit": limit,
+            "products": paginated_items
+        }
+        print(json.dumps(result))
 
     elif action == "recommend_basket":
         payload = json.loads(sys.argv[2])

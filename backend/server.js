@@ -60,13 +60,16 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// GET /api/marketplace?category=CAT&query=Q
+// GET /api/marketplace?category=CAT&query=Q&sort_by=SORT&page=PAGE&limit=LIMIT
 app.get('/api/marketplace', async (req, res) => {
     try {
         const cat = req.query.category || 'All';
         const q = req.query.query || '';
-        const data = await runPython(['marketplace_catalog', cat, q]);
-        res.json({ success: true, products: data });
+        const sortBy = req.query.sort_by || 'popular';
+        const page = req.query.page || '1';
+        const limit = req.query.limit || '20';
+        const data = await runPython(['marketplace_catalog', cat, q, sortBy, page, limit]);
+        res.json({ success: true, ...data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

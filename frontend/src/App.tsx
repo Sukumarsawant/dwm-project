@@ -39,6 +39,10 @@ export default function App() {
   const [marketplaceProducts, setMarketplaceProducts] = useState<any[]>([]);
   const [marketCategory, setMarketCategory] = useState<string>('All');
   const [marketSearch, setMarketSearch] = useState<string>('');
+  const [marketSortBy, setMarketSortBy] = useState<string>('popular');
+  const [marketPage, setMarketPage] = useState<number>(1);
+  const [marketTotalPages, setMarketTotalPages] = useState<number>(1);
+  const [marketTotalCount, setMarketTotalCount] = useState<number>(0);
   const [loadingMarket, setLoadingMarket] = useState<boolean>(false);
 
   // Interactive PowerBI Filter Slicers
@@ -74,19 +78,22 @@ export default function App() {
   const rulesPerPage = 15;
 
   useEffect(() => {
-    fetchMarketplace('All', '');
+    fetchMarketplace('All', '', 'popular', 1);
     fetchAnalytics();
     fetchCustomers();
     fetchRules();
   }, []);
 
-  const fetchMarketplace = async (category = marketCategory, search = marketSearch) => {
+  const fetchMarketplace = async (category = marketCategory, search = marketSearch, sortBy = marketSortBy, page = marketPage) => {
     setLoadingMarket(true);
     try {
-      const res = await fetch(`${API_BASE}/marketplace?category=${encodeURIComponent(category)}&query=${encodeURIComponent(search)}`);
+      const res = await fetch(`${API_BASE}/marketplace?category=${encodeURIComponent(category)}&query=${encodeURIComponent(search)}&sort_by=${encodeURIComponent(sortBy)}&page=${page}&limit=20`);
       const data = await res.json();
       if (data.success) {
         setMarketplaceProducts(data.products || []);
+        setMarketTotalPages(data.total_pages || 1);
+        setMarketTotalCount(data.total_count || 0);
+        setMarketPage(data.current_page || 1);
       }
     } catch (err) {
       console.error(err);
@@ -470,7 +477,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Category Filter Pills & Search */}
+              {/* Category Filter Pills, Search, and Sort */}
               <div className="amz-card" style={{ marginBottom: '20px', padding: '14px 18px' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -481,7 +488,7 @@ export default function App() {
                         className={`btn-pill ${marketCategory === cat ? 'active' : ''}`}
                         onClick={() => {
                           setMarketCategory(cat);
-                          fetchMarketplace(cat, marketSearch);
+                          fetchMarketplace(cat, marketSearch, marketSortBy, 1);
                         }}
                       >
                         {cat}
@@ -489,18 +496,42 @@ export default function App() {
                     ))}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', minWidth: '240px' }}>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Sort By:</span>
+                      <select
+                        value={marketSortBy}
+                        onChange={(e) => {
+                          const newSort = e.target.value;
+                          setMarketSortBy(newSort);
+                          fetchMarketplace(marketCategory, marketSearch, newSort, 1);
+                        }}
+                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12.5px', background: '#fff', fontWeight: 600 }}
+                      >
+                        <option value="popular">🔥 Most Popular (Order Frequency)</option>
+                        <option value="price_asc">Price: Low to High</option>
+                        <option value="price_desc">Price: High to Low</option>
+                        <option value="name">Product Name (A-Z)</option>
+                      </select>
+                    </div>
+
                     <input
                       type="text"
-                      placeholder="Filter store items..."
+                      placeholder="Search 3,665+ items..."
                       value={marketSearch}
                       onChange={(e) => {
-                        setMarketSearch(e.target.value);
-                        fetchMarketplace(marketCategory, e.target.value);
+                        const newQuery = e.target.value;
+                        setMarketSearch(newQuery);
+                        fetchMarketplace(marketCategory, newQuery, marketSortBy, 1);
                       }}
-                      style={{ padding: '6px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', width: '100%' }}
+                      style={{ padding: '6px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', minWidth: '180px' }}
                     />
                   </div>
+                </div>
+
+                <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Showing <strong>{marketplaceProducts.length}</strong> of <strong>{marketTotalCount.toLocaleString()}</strong> catalog products (Page {marketPage} of {marketTotalPages})</span>
+                  <span>Products ranked by real historical transaction frequency</span>
                 </div>
               </div>
 
@@ -510,37 +541,138 @@ export default function App() {
               ) : marketplaceProducts.length === 0 ? (
                 <div className="warning-box">No products found matching the selected category/search.</div>
               ) : (
-                <div className="amz-products-grid">
-                  {marketplaceProducts.map((p, idx) => {
-                    const inCart = selectedBasket.includes(p.description);
-                    return (
-                      <div key={idx} className="amz-product-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                        <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                            <span className="card-badge">{p.category || 'RETAIL ITEM'}</span>
-                            <span style={{ fontSize: '11px', color: '#94a3b8' }}>#{p.stock_code}</span>
+                <>
+                  <div className="amz-products-grid">
+                    {marketplaceProducts.map((p, idx) => {
+                      const inCart = selectedBasket.includes(p.description);
+                      const isBestseller = p.orders_count >= 500;
+                      return (
+                        <div key={idx} className="amz-product-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span className="card-badge">{p.category || 'RETAIL ITEM'}</span>
+                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>#{p.stock_code}</span>
+                            </div>
+                            <h4 className="prod-name" style={{ minHeight: '40px', fontSize: '14px', lineHeight: '1.3' }}>{p.description}</h4>
+                            
+                            {/* Popularity Indicator */}
+                            <div style={{ margin: '6px 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                background: isBestseller ? '#fef3c7' : '#f1f5f9',
+                                color: isBestseller ? '#b45309' : '#475569',
+                                padding: '2px 7px',
+                                borderRadius: '4px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}>
+                                {isBestseller ? '🔥 Popular Bestseller' : '📊 Frequent Purchase'}
+                              </span>
+                              <span style={{ fontSize: '11px', color: '#64748b' }}>
+                                Ordered in <strong>{Number(p.orders_count).toLocaleString()}</strong> baskets ({Number(p.total_quantity).toLocaleString()} units)
+                              </span>
+                            </div>
                           </div>
-                          <h4 className="prod-name" style={{ minHeight: '40px', fontSize: '14px', lineHeight: '1.3' }}>{p.description}</h4>
-                        </div>
 
-                        <div style={{ marginTop: '12px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
-                            <span style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>£{Number(p.unit_price).toFixed(2)}</span>
-                            <span style={{ fontSize: '11px', color: '#059669', fontWeight: 600 }}>In Stock (Verified)</span>
+                          <div style={{ marginTop: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
+                              <span style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>£{Number(p.unit_price).toFixed(2)}</span>
+                              <span style={{ fontSize: '11px', color: '#059669', fontWeight: 600 }}>In Stock (Verified)</span>
+                            </div>
+
+                            <button
+                              className={`toggle-btn ${inCart ? '' : 'active'}`}
+                              onClick={() => inCart ? removeFromBasket(p.description) : addToBasket(p.description)}
+                              style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px', borderRadius: '4px' }}
+                            >
+                              {inCart ? '✓ Added in Cart (Click to Remove)' : '➕ Add to Cart'}
+                            </button>
                           </div>
-
-                          <button
-                            className={`toggle-btn ${inCart ? '' : 'active'}`}
-                            onClick={() => inCart ? removeFromBasket(p.description) : addToBasket(p.description)}
-                            style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px', borderRadius: '4px' }}
-                          >
-                            {inCart ? '✓ Added in Cart (Click to Remove)' : '➕ Add to Cart'}
-                          </button>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Numbered Pagination Navigation */}
+                  {marketTotalPages > 1 && (
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: '6px',
+                      marginTop: '25px',
+                      flexWrap: 'wrap',
+                      padding: '16px',
+                      background: '#fff',
+                      borderRadius: '8px',
+                      border: '1px solid #e2e8f0'
+                    }}>
+                      <button
+                        className="btn-pill"
+                        disabled={marketPage === 1}
+                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, 1)}
+                        style={{ opacity: marketPage === 1 ? 0.4 : 1, cursor: marketPage === 1 ? 'not-allowed' : 'pointer' }}
+                      >
+                        « First
+                      </button>
+                      <button
+                        className="btn-pill"
+                        disabled={marketPage === 1}
+                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, marketPage - 1)}
+                        style={{ opacity: marketPage === 1 ? 0.4 : 1, cursor: marketPage === 1 ? 'not-allowed' : 'pointer' }}
+                      >
+                        ‹ Prev
+                      </button>
+
+                      {/* Dynamic Page Number Windows */}
+                      {Array.from({ length: marketTotalPages }, (_, i) => i + 1)
+                        .filter(pageNum => (
+                          pageNum === 1 ||
+                          pageNum === marketTotalPages ||
+                          Math.abs(pageNum - marketPage) <= 2
+                        ))
+                        .map((pageNum, idx, arr) => {
+                          const prev = arr[idx - 1];
+                          const showEllipsis = prev && pageNum - prev > 1;
+                          return (
+                            <React.Fragment key={pageNum}>
+                              {showEllipsis && <span style={{ padding: '0 4px', color: '#94a3b8' }}>...</span>}
+                              <button
+                                className={`btn-pill ${marketPage === pageNum ? 'active' : ''}`}
+                                onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, pageNum)}
+                                style={{
+                                  fontWeight: marketPage === pageNum ? 700 : 500,
+                                  minWidth: '36px',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                {pageNum}
+                              </button>
+                            </React.Fragment>
+                          );
+                        })}
+
+                      <button
+                        className="btn-pill"
+                        disabled={marketPage === marketTotalPages}
+                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, marketPage + 1)}
+                        style={{ opacity: marketPage === marketTotalPages ? 0.4 : 1, cursor: marketPage === marketTotalPages ? 'not-allowed' : 'pointer' }}
+                      >
+                        Next ›
+                      </button>
+                      <button
+                        className="btn-pill"
+                        disabled={marketPage === marketTotalPages}
+                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, marketTotalPages)}
+                        style={{ opacity: marketPage === marketTotalPages ? 0.4 : 1, cursor: marketPage === marketTotalPages ? 'not-allowed' : 'pointer' }}
+                      >
+                        Last »
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
