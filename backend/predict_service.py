@@ -3,6 +3,7 @@ import sys
 import json
 import pandas as pd
 import numpy as np
+from mlxtend.frequent_patterns import fpgrowth, association_rules
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(BASE_DIR, 'data', 'cleaned_online_retail.csv')
@@ -70,6 +71,8 @@ def recommend_products_apriori(selected_products, min_support=0.0, min_confidenc
 
         support = float(row["support"])
         confidence = float(row["confidence"])
+        if not np.isfinite(support) or not np.isfinite(confidence):
+            continue
 
         if confidence < min_confidence or support < min_support:
             continue
@@ -83,6 +86,7 @@ def recommend_products_apriori(selected_products, min_support=0.0, min_confidenc
             "matched_rule": matched_rule,
             "support": round(support, 4),
             "confidence": round(confidence, 4),
+            "lift": round(float(row.get("lift", 0.0)), 4),
             "explanation": build_explanation(ants_list, cons_list, confidence, support)
         })
 
@@ -93,6 +97,54 @@ def recommend_products_apriori(selected_products, min_support=0.0, min_confidenc
     res_df = res_df.drop_duplicates(subset=["recommended_product"])
     res_df = res_df.sort_values(by=["confidence", "support"], ascending=False)
     return res_df.head(top_n).to_dict(orient="records")
+
+def build_basket_matrix():
+    """Build one boolean row per real invoice and one column per purchased product."""
+    basket_matrix = (df.groupby(['InvoiceNo', 'Description'])['Quantity']
+                     .sum().unstack(fill_value=0).gt(0))
+    return basket_matrix
+
+def mine_fpgrowth_rules(basket_matrix, min_support=0.003, min_confidence=0.15):
+    """Run FP-Growth on transaction baskets and produce association rules."""
+    frequent_itemsets = fpgrowth(basket_matrix, min_support=max(0.001, min_support), use_colnames=True)
+    if frequent_itemsets.empty or not frequent_itemsets['itemsets'].map(len).gt(1).any():
+        return []
+    mined = association_rules(frequent_itemsets, metric='confidence', min_threshold=min_confidence)
+    return mined.to_dict(orient='records')
+
+def recommend_products_fpgrowth(selected_products, min_support=0.003, min_confidence=0.15, top_n=10, basket_matrix=None):
+    """Mine live FP-Growth rules from the cleaned invoice data for a sample basket."""
+    basket_matrix = basket_matrix if basket_matrix is not None else build_basket_matrix()
+    mined = pd.DataFrame(mine_fpgrowth_rules(basket_matrix, min_support, min_confidence))
+    if mined.empty:
+        return []
+    selected_set = set(selected_products)
+    recommendations = []
+    for _, row in mined.iterrows():
+        antecedents, consequents = set(row['antecedents']), set(row['consequents'])
+        if not antecedents.issubset(selected_set) or consequents.intersection(selected_set):
+            continue
+        recommendations.append({
+            'recommended_product': ' + '.join(sorted(consequents)),
+            'recommended_products': sorted(consequents),
+            'matched_rule': ' + '.join(sorted(antecedents)) + ' -> ' + ' + '.join(sorted(consequents)),
+            'support': round(float(row['support']), 4),
+            'confidence': round(float(row['confidence']), 4),
+            'lift': round(float(row['lift']), 4),
+            'explanation': build_explanation(sorted(antecedents), sorted(consequents), float(row['confidence']), float(row['support']))
+        })
+    result = pd.DataFrame(recommendations)
+    if result.empty:
+        return []
+    return (result.drop_duplicates(subset=['recommended_product'])
+            .sort_values(by=['lift', 'confidence', 'support'], ascending=False)
+            .head(top_n).to_dict(orient='records'))
+
+def recommend_products_compare(selected_products, min_support=0.003, min_confidence=0.15, top_n=10):
+    """Compare precomputed Apriori rules with live FP-Growth on identical baskets/thresholds."""
+    apriori = recommend_products_apriori(selected_products, min_support, min_confidence, top_n)
+    fp_growth = recommend_products_fpgrowth(selected_products, min_support, min_confidence, top_n)
+    return {"apriori": apriori, "fpgrowth": fp_growth}
 
 if __name__ == "__main__":
     action = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -159,13 +211,12 @@ if __name__ == "__main__":
         min_supp = float(payload.get("min_support", 0.0))
         min_conf = float(payload.get("min_confidence", 0.0))
         top_n = int(payload.get("top_n", 10))
-
-        recs = recommend_products_apriori(
-            selected_products=selected_prods,
-            min_support=min_supp,
-            min_confidence=min_conf,
-            top_n=top_n
-        )
+        algorithm = str(payload.get('algorithm', 'fpgrowth')).lower()
+        if algorithm == 'compare':
+            recs = recommend_products_compare(selected_prods, min_supp, min_conf, top_n)
+        else:
+            recommend = recommend_products_fpgrowth if algorithm in {'fpgrowth', 'fp-growth'} else recommend_products_apriori
+            recs = recommend(selected_products=selected_prods, min_support=min_supp, min_confidence=min_conf, top_n=top_n)
         print(json.dumps(recs))
 
     elif action == "analytics":
@@ -194,7 +245,7 @@ if __name__ == "__main__":
         hourly.columns = ['hour', 'transactions']
         hourly_list = hourly.to_dict(orient='records')
 
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday']
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_dist = df.groupby('DayOfWeek')['InvoiceNo'].nunique().reindex(day_order).reset_index()
         day_dist.columns = ['day', 'transactions']
         day_list = day_dist.to_dict(orient='records')
@@ -315,7 +366,21 @@ if __name__ == "__main__":
             "stacked_category_monthly": stacked_category_monthly,
             "country_matrix": country_matrix
         }
-        print(json.dumps(metrics))
+        # Pandas aggregation can produce NaN for empty combinations (for example,
+        # categories missing from a month). JSON's NaN token is not standards-compliant
+        # and causes the Node API and browser to reject the entire analytics response.
+        def sanitize_json(value):
+            if isinstance(value, dict):
+                return {key: sanitize_json(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [sanitize_json(item) for item in value]
+            if isinstance(value, (np.integer, np.floating)):
+                value = value.item()
+            if isinstance(value, float) and not np.isfinite(value):
+                return None
+            return value
+
+        print(json.dumps(sanitize_json(metrics), allow_nan=False))
 
     elif action == "customers":
         print(customers.to_json(orient='records'))

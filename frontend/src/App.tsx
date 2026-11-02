@@ -1,1622 +1,203 @@
-import React, { useEffect, useState } from 'react';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
-  ZAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  Treemap
-} from 'recharts';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Activity, Boxes, BrainCircuit, ChevronDown, CircleHelp, Filter, LayoutDashboard, LoaderCircle, PackageSearch, RefreshCw, Search, ShoppingBasket, Sparkles, Users, X, Plus, Minus, Tag, ShoppingBag } from 'lucide-react';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './App.css';
 
-const API_BASE = 'http://localhost:5000/api';
+const API = 'http://localhost:5000/api';
+type Tab = 'overview' | 'marketplace' | 'basket' | 'customers' | 'rules';
+type AnyRow = Record<string, any>;
+const COLORS = ['#5b66e8', '#28a879', '#f3a844', '#e66d83', '#3da6bc'];
+const money = (n: number) => String.fromCharCode(163) + Number(n || 0).toLocaleString('en-GB', { maximumFractionDigits: 2 });
 
-// PowerBI Color Palette for Consistent Corporate BI Rendering
-const CLUSTER_COLORS: { [key: string]: string } = {
-  "VIP / High-Value Champions": "#10b981", // Emerald
-  "Loyal Regular Customers": "#2563eb",   // Royal Blue
-  "New / Recent Customers": "#f59e0b",    // Amber
-  "Lost / Inactive Customers": "#ef4444"   // Crimson
-};
-
-const CATEGORY_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
-
-export default function App() {
-  const [activeTab, setActiveTab] = useState<'marketplace' | 'analytics' | 'recommender' | 'clusters' | 'rules'>('marketplace');
-
-  // Marketplace State
-  const [marketplaceProducts, setMarketplaceProducts] = useState<any[]>([]);
-  const [marketCategory, setMarketCategory] = useState<string>('All');
-  const [marketSearch, setMarketSearch] = useState<string>('');
-  const [marketSortBy, setMarketSortBy] = useState<string>('popular');
-  const [marketPage, setMarketPage] = useState<number>(1);
-  const [marketTotalPages, setMarketTotalPages] = useState<number>(1);
-  const [marketTotalCount, setMarketTotalCount] = useState<number>(0);
-  const [loadingMarket, setLoadingMarket] = useState<boolean>(false);
-
-  // Interactive PowerBI Filter Slicers
-  const [metricView, setMetricView] = useState<'revenue' | 'orders'>('revenue');
-  const [timeGranularity, setTimeGranularity] = useState<'monthly' | 'quarterly'>('monthly');
-  const [selectedCountryFilter, setSelectedCountryFilter] = useState<string>('All');
-  const [selectedSegmentFilter, setSelectedSegmentFilter] = useState<string>('All');
-  const [dateRangeFilter, setDateRangeFilter] = useState<'all' | '2011' | 'h2_2011'>('all');
-
-  // Search & Basket State for Recommender (Supports Item Quantities / Multiple Buys)
+function App() {
+  const [tab, setTab] = useState<Tab>('overview');
+  const [analytics, setAnalytics] = useState<AnyRow | null>(null);
+  const [customers, setCustomers] = useState<AnyRow[]>([]);
+  const [rules, setRules] = useState<AnyRow[]>([]);
+  const [problem, setProblem] = useState('');
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<string[]>([]);
-  const [basketQuantities, setBasketQuantities] = useState<Record<string, number>>({});
-  const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [loadingRecs, setLoadingRecs] = useState(false);
-  const [isCheckedOut, setIsCheckedOut] = useState(false);
+  const [matches, setMatches] = useState<string[]>([]);
+  const [basket, setBasket] = useState<string[]>([]);
+  const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth' | 'compare'>('fpgrowth');
+  const [minConfidence, setMinConfidence] = useState(.15);
+  const [recommendations, setRecommendations] = useState<AnyRow[]>([]);
+  const [comparison, setComparison] = useState<AnyRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [segment, setSegment] = useState('All');
+  const [ruleSearch, setRuleSearch] = useState('');
+  const [catalog, setCatalog] = useState<AnyRow[]>([]);
+  const [catalogTotal, setCatalogTotal] = useState(0);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogSort, setCatalogSort] = useState('popular');
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [priceIndex, setPriceIndex] = useState<AnyRow[]>([]);
+  const [cartQty, setCartQty] = useState<Record<string, number>>({});
+  const [discountedItems, setDiscountedItems] = useState<string[]>([]);
 
-  // Apriori Threshold Sliders (Support & Confidence)
-  const [minSupport, setMinSupport] = useState<number>(0.015);
-  const [minConfidence, setMinConfidence] = useState<number>(0.15);
-
-  // Dashboard & Analytics State
-  const [analytics, setAnalytics] = useState<any>(null);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [rules, setRules] = useState<any[]>([]);
-
-  // Association Rules Filtering & Pagination State
-  const [rulesSearch, setRulesSearch] = useState<string>('');
-  const [rulesFilterType, setRulesFilterType] = useState<'all' | 'single' | 'multi'>('all');
-  const [rulesSortBy, setRulesSortBy] = useState<'confidence' | 'support'>('confidence');
-  const [rulesPage, setRulesPage] = useState<number>(1);
-  const rulesPerPage = 15;
+  const load = async () => {
+    setLoading(true); setProblem('');
+    try {
+      const [a, c, r] = await Promise.all([fetch(`${API}/analytics`), fetch(`${API}/customers`), fetch(`${API}/rules`)]);
+      const [ad, cd, rd] = await Promise.all([a.json(), c.json(), r.json()]);
+      if (!a.ok || !ad.success) throw new Error(ad.error || 'Analytics API is unavailable. Start the backend and confirm its Python dependencies are installed.');
+      setAnalytics(ad.data); setCustomers(cd.data || []); setRules(rd.data || []);
+    } catch (e: any) { setProblem(e.message || 'Could not connect to the analytics service.'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (query.trim().length < 2) { setMatches([]); return; }
+    const timer = setTimeout(async () => {
+      try { const r = await fetch(`${API}/products?query=${encodeURIComponent(query)}`); setMatches(await r.json()); } catch { setMatches([]); }
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
-    fetchMarketplace('All', '', 'popular', 1);
-    fetchAnalytics();
-    fetchCustomers();
-    fetchRules();
-  }, []);
+    if (tab !== 'marketplace') return;
+    let cancelled = false;
+    setCatalogBusy(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/marketplace?query=${encodeURIComponent(catalogSearch)}&sort_by=${catalogSort}&page=1&limit=24`);
+        const data = await res.json();
+        if (!cancelled && res.ok && data.success) { setCatalog(data.products || []); setCatalogTotal(data.total_count || 0); }
+      } catch { if (!cancelled) setProblem('Could not load products from the catalog.'); }
+      finally { if (!cancelled) setCatalogBusy(false); }
+    }, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [tab, catalogSearch, catalogSort]);
 
-  const fetchMarketplace = async (category = marketCategory, search = marketSearch, sortBy = marketSortBy, page = marketPage) => {
-    setLoadingMarket(true);
+  useEffect(() => {
+    if (tab !== 'marketplace' || priceIndex.length) return;
+    fetch(`${API}/marketplace?page=1&limit=5000`).then(r => r.json()).then(data => {
+      if (data.success) setPriceIndex(data.products || []);
+    }).catch(() => undefined);
+  }, [tab, priceIndex.length]);
+
+  useEffect(() => {
+    if (tab !== 'marketplace' || basket.length === 0) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/recommend`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ products: basket, algorithm: 'fpgrowth', min_confidence: .1, min_support: .003, top_n: 8 }) });
+        const data = await res.json();
+        if (!cancelled && res.ok && data.success) setRecommendations(data.recommendations || []);
+      } catch { if (!cancelled) setRecommendations([]); }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [tab, basket]);
+
+  const filteredCustomers = useMemo(() => customers.filter(c => segment === 'All' || c.Segment_Name === segment), [customers, segment]);
+  const filteredRules = useMemo(() => rules.filter(r => `${r.antecedents} ${r.consequents}`.toLowerCase().includes(ruleSearch.toLowerCase())).slice(0, 100), [rules, ruleSearch]);
+  const add = (product: string, applyDeal = false) => {
+    setBasket(prev => prev.includes(product) ? prev : [...prev, product]);
+    setCartQty(prev => ({ ...prev, [product]: (prev[product] || 0) + 1 }));
+    if (applyDeal) setDiscountedItems(prev => prev.includes(product) ? prev : [...prev, product]);
+    setQuery(''); setMatches([]); setRecommendations([]); setComparison(null);
+  };
+  const remove = (product: string) => {
+    setBasket(prev => prev.filter(item => item !== product)); setRecommendations([]); setComparison(null);
+    setCartQty(prev => { const next = { ...prev }; delete next[product]; return next; });
+    setDiscountedItems(prev => prev.filter(item => item !== product));
+  };
+  const changeQty = (product: string, delta: number) => {
+    const nextQty = (cartQty[product] || 1) + delta;
+    if (nextQty <= 0) { remove(product); return; }
+    setCartQty(prev => ({ ...prev, [product]: nextQty }));
+  };
+  const productByName = useMemo(() => new Map([...priceIndex, ...catalog].map(p => [String(p.description), p])), [catalog, priceIndex]);
+  const cartSubtotal = basket.reduce((sum, name) => sum + Number(productByName.get(name)?.unit_price || 0) * (cartQty[name] || 1), 0);
+  const cartSavings = discountedItems.reduce((sum, name) => sum + Number(productByName.get(name)?.unit_price || 0) * (cartQty[name] || 1) * .1, 0);
+  const offerProducts = useMemo(() => {
+    const seen = new Set<string>();
+    return recommendations.flatMap(r => (r.recommended_products || [r.recommended_product]).map((name: string) => ({ ...r, offerProduct: name })))
+      .filter(r => !basket.includes(r.offerProduct) && !seen.has(r.offerProduct) && Boolean(seen.add(r.offerProduct))).slice(0, 4);
+  }, [recommendations, basket]);
+  const recommend = async () => {
+    if (!basket.length) return;
+    setBusy(true); setRecommendations([]); setComparison(null);
     try {
-      const res = await fetch(`${API_BASE}/marketplace?category=${encodeURIComponent(category)}&query=${encodeURIComponent(search)}&sort_by=${encodeURIComponent(sortBy)}&page=${page}&limit=20`);
+      const res = await fetch(`${API}/recommend`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ products: basket, algorithm, min_confidence: minConfidence, min_support: .003, top_n: 12 }) });
       const data = await res.json();
-      if (data.success) {
-        setMarketplaceProducts(data.products || []);
-        setMarketTotalPages(data.total_pages || 1);
-        setMarketTotalCount(data.total_count || 0);
-        setMarketPage(data.current_page || 1);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingMarket(false);
-    }
+      if (!res.ok || !data.success) throw new Error(data.error || 'Recommendation request failed.');
+      if (algorithm === 'compare') { setComparison(data.recommendations); setRecommendations([]); }
+      else setRecommendations(data.recommendations || []);
+    } catch (e: any) { setProblem(e.message); }
+    finally { setBusy(false); }
   };
 
-  const fetchAnalytics = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/analytics`);
-      const data = await res.json();
-      if (data.success) setAnalytics(data.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const nav: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={18}/> },
+    { id: 'marketplace', label: 'Marketplace', icon: <ShoppingBag size={18}/> },
+    { id: 'basket', label: 'Basket analysis', icon: <ShoppingBasket size={18}/> },
+    { id: 'customers', label: 'Customer segments', icon: <Users size={18}/> },
+    { id: 'rules', label: 'Association rules', icon: <Boxes size={18}/> },
+  ];
 
-  const fetchCustomers = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/customers`);
-      const data = await res.json();
-      if (data.success) setCustomers(data.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  return <div className="shell">
+    <aside className="sidebar">
+      <a className="brand" href="#overview"><span className="brand-mark"><ShoppingBasket size={20}/></span><span>Basket<span className="brand-accent">IQ</span><small>RETAIL INTELLIGENCE</small></span></a>
+      <div className="nav-label">WORKSPACE</div>
+      <nav>{nav.map(n => <button key={n.id} className={`nav-item ${tab === n.id ? 'active' : ''}`} onClick={() => setTab(n.id)}>{n.icon}<span>{n.label}</span>{tab === n.id && <i/>}</button>)}</nav>
+      <div className="side-spacer"/>
+      <div className="model-mini"><div className="mini-title"><span className="status-dot"/> MODELS READY</div><div><b>Apriori</b><span>Itemset mining</span></div><div><b>FP-Growth</b><span>Frequent patterns</span></div><div><b>K-Means</b><span>RFM segments</span></div></div>
+      <div className="side-footer"><span className="avatar">DW</span><span><b>DWM Project</b><small>Retail analytics workspace</small></span><ChevronDown size={15}/></div>
+    </aside>
 
-  const fetchRules = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/rules`);
-      const data = await res.json();
-      if (data.success) setRules(data.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleSearchChange = async (val: string) => {
-    setQuery(val);
-    if (val.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    try {
-      const res = await fetch(`${API_BASE}/products?query=${encodeURIComponent(val)}`);
-      const data = await res.json();
-      setSearchResults(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const selectedBasket = Object.keys(basketQuantities);
-  const totalBasketItemCount = Object.values(basketQuantities).reduce((acc, count) => acc + count, 0);
-
-  const addToBasket = (prod: string, qty = 1) => {
-    setBasketQuantities((prev) => ({
-      ...prev,
-      [prod]: (prev[prod] || 0) + qty
-    }));
-    setQuery('');
-    setSearchResults([]);
-    setIsCheckedOut(false);
-  };
-
-  const decrementBasketItem = (prod: string) => {
-    setBasketQuantities((prev) => {
-      const current = prev[prod] || 0;
-      if (current <= 1) {
-        const copy = { ...prev };
-        delete copy[prod];
-        return copy;
-      }
-      return { ...prev, [prod]: current - 1 };
-    });
-    setRecommendations([]);
-    setIsCheckedOut(false);
-  };
-
-  const removeFromBasket = (prod: string) => {
-    setBasketQuantities((prev) => {
-      const copy = { ...prev };
-      delete copy[prod];
-      return copy;
-    });
-    setRecommendations([]);
-    setIsCheckedOut(false);
-  };
-
-  // Automatically fetch recommendations when entering checkout mode
-  const handleProceedToCheckout = async () => {
-    if (selectedBasket.length === 0) return;
-
-    setIsCheckedOut(true);
-    setLoadingRecs(true);
-    setHasSearched(true);
-    try {
-      const res = await fetch(`${API_BASE}/recommend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          products: selectedBasket,
-          min_support: minSupport,
-          min_confidence: minConfidence,
-          top_n: 10
-        })
-      });
-      const data = await res.json();
-      setRecommendations(data.recommendations || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingRecs(false);
-    }
-  };
-
-  // Dynamic Slicer Computation: Compute filtered metrics when Region or Segment filters change
-  const getFilteredMetrics = () => {
-    if (!analytics) return null;
-
-    let countryItem = null;
-    if (selectedCountryFilter !== 'All') {
-      if (selectedCountryFilter === 'United Kingdom') {
-        countryItem = (analytics.country_matrix || []).find((c: any) => c.Country === 'United Kingdom');
-      } else if (selectedCountryFilter === 'International') {
-        const intlList = (analytics.country_matrix || []).filter((c: any) => c.Country !== 'United Kingdom');
-        const rev = intlList.reduce((acc: number, c: any) => acc + (c.revenue || 0), 0);
-        const orders = intlList.reduce((acc: number, c: any) => acc + (c.orders || 0), 0);
-        const custs = intlList.reduce((acc: number, c: any) => acc + (c.customers || 0), 0);
-        countryItem = {
-          Country: 'International',
-          revenue: rev,
-          orders: orders,
-          customers: custs,
-          aov: orders > 0 ? rev / orders : 0
-        };
-      } else {
-        countryItem = (analytics.country_matrix || []).find((c: any) => c.Country === selectedCountryFilter);
-      }
-    }
-
-    let segmentCount = null;
-    if (selectedSegmentFilter !== 'All') {
-      segmentCount = analytics.cluster_distribution ? analytics.cluster_distribution[selectedSegmentFilter] : null;
-    }
-
-    // Dynamic KPI Cards
-    const totalRevenue = countryItem ? countryItem.revenue : analytics.total_revenue;
-    const totalOrders = countryItem ? countryItem.orders : analytics.total_transactions;
-    const totalCustomers = segmentCount !== null 
-      ? segmentCount 
-      : (countryItem ? countryItem.customers : analytics.total_customers);
-    const avgOrderValue = countryItem ? countryItem.aov : analytics.avg_order_value;
-
-    // Filtered monthly trend (for Date slicer)
-    let monthlyTrend = analytics.monthly_trend || [];
-    if (dateRangeFilter === '2011') {
-      monthlyTrend = monthlyTrend.filter((m: any) => m.MonthYear && m.MonthYear.startsWith('2011'));
-    }
-
-    // Filtered Donut Segments
-    let clusterDist = { ...analytics.cluster_distribution };
-    if (selectedSegmentFilter !== 'All') {
-      clusterDist = { [selectedSegmentFilter]: clusterDist[selectedSegmentFilter] || 0 };
-    }
-
-    return {
-      totalRevenue,
-      totalOrders,
-      totalCustomers,
-      avgOrderValue,
-      monthlyTrend,
-      clusterDist
-    };
-  };
-
-  const filteredMetrics = getFilteredMetrics();
-
-  return (
-    <div className="amz-layout">
-      {/* Amazon Top Navigation Bar */}
-      <header className="amz-navbar">
-        <div className="amz-brand">
-          <span className="amz-logo">Cart<span className="logo-suffix">analytics</span></span>
-          <span className="amz-badge">PowerBI Enterprise Edition</span>
-        </div>
-
-        <div className="amz-search-bar">
-          <span className="amz-search-cat">All Categories</span>
-          <input
-            type="text"
-            placeholder="Search items for basket analysis (e.g. HEART, BAG, MUG)..."
-            value={query}
-            onChange={(e) => handleSearchChange(e.target.value)}
-          />
-          <button className="amz-search-btn">🔍</button>
-
-          {searchResults.length > 0 && (
-            <div className="amz-dropdown">
-              {searchResults.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="amz-dropdown-item"
-                  onClick={() => { addToBasket(item); }}
-                >
-                  ➕ Add to Cart: <strong>{item}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="amz-nav-right">
-          <div className="amz-cart-widget" onClick={() => setActiveTab('recommender')}>
-            <span className="cart-icon">🛒</span>
-            <span className="cart-count">{totalBasketItemCount}</span>
-            <span className="cart-text">Cart ({totalBasketItemCount})</span>
+    <main className="main">
+      <header className="topbar"><div className="crumb"><span>Workspace</span><b>/</b>{nav.find(n => n.id === tab)?.label}</div><div className="top-actions"><span className="period"><span className="status-dot"/> ONLINE RETAIL · 2010—2011</span><button className="icon-button" aria-label="Help"><CircleHelp size={17}/></button><button className="icon-button" aria-label="Refresh data" onClick={load}><RefreshCw size={16}/></button><span className="avatar small-avatar">SS</span></div></header>
+      <div className="page">
+        {problem && <div className="alert"><CircleHelp size={18}/><div><b>Data service unavailable</b><span>{problem}</span></div><button onClick={() => setProblem('')}><X size={16}/></button></div>}
+        {loading && <div className="loading"><LoaderCircle className="spin"/> Loading retail analytics…</div>}
+        {!loading && tab === 'marketplace' && <>
+          <div className="page-heading"><div><div className="eyebrow">BASKETIQ STORE</div><h1>Find your next favourite<span className="period-dot">.</span></h1><p>Shop popular products, then add a recommended pairing to unlock a bundle offer.</p></div><div className="store-basket-badge"><ShoppingBag size={17}/><span>{basket.reduce((n,p)=>n+(cartQty[p]||1),0)} items</span></div></div>
+          <div className="promo-banner"><span className="promo-icon"><Tag size={20}/></span><div><strong>Add a recommended item. Save an extra 10%.</strong><span>Live FP-Growth recommendations mined from the project's invoice data.</span></div><span className="promo-tag">FP-GROWTH</span></div>
+          <div className="store-toolbar"><div className="store-search"><Search size={16}/><input value={catalogSearch} onChange={e=>setCatalogSearch(e.target.value)} placeholder="Search the product catalogue"/><span>{catalogTotal.toLocaleString()} items</span></div><select aria-label="Sort products" value={catalogSort} onChange={e=>setCatalogSort(e.target.value)}><option value="popular">Most popular</option><option value="price_asc">Price: low to high</option><option value="price_desc">Price: high to low</option><option value="name">Name: A to Z</option></select></div>
+          <div className="market-layout"><section className="store-main"><div className="store-grid">{catalogBusy?<div className="store-loading"><LoaderCircle className="spin"/> Loading products…</div>:catalog.map((product,i)=><article className="store-card" key={product.stock_code || product.description}><div className={`store-product-art art-${i%6}`}><PackageSearch size={31}/><span>{product.category || 'Curated pick'}</span></div><div className="store-product-meta"><span>{product.category || 'Retail pick'}</span><span className="popularity">{Number(product.orders_count||0).toLocaleString()} orders</span></div><h3>{product.description}</h3><div className="store-price">{money(Number(product.unit_price||0))}<small>historical unit price</small></div><button className={`add-to-cart ${basket.includes(product.description)?'in-cart':''}`} onClick={()=>add(product.description)}>{basket.includes(product.description)?<><Plus size={15}/> Add another</>:<><ShoppingBag size={15}/> Add to basket</>}</button></article>)}{!catalogBusy&&catalog.length===0&&<div className="empty-results"><PackageSearch size={23}/><span>No matching products</span><small>Try another search term.</small></div>}</div><div className="store-footnote">Prices are historical average unit prices from the project dataset. Discounts are a simulated product demonstration; checkout and payment are not enabled.</div></section>
+            <aside className="store-rail"><div className="panel cart-panel"><div className="panel-head"><div><h2>Your basket</h2><p>{basket.reduce((n,p)=>n+(cartQty[p]||1),0)} items · {basket.length} products</p></div><ShoppingBag className="head-icon" size={18}/></div>{basket.length===0?<div className="cart-empty"><ShoppingBag size={25}/><span>Your basket is empty</span><small>Add a product to see matching add-on deals.</small></div>:<><div className="cart-lines">{basket.map(product=>{const item=productByName.get(product);const qty=cartQty[product]||1;const discounted=discountedItems.includes(product);const price=Number(item?.unit_price||0);return <div className="cart-line" key={product}><div className="cart-line-copy"><b>{product}</b><span>{money(price)} each{discounted?' · 10% offer applied':''}</span></div><div className="qty-control"><button onClick={()=>changeQty(product,-1)} aria-label="Decrease quantity"><Minus size={12}/></button><span>{qty}</span><button onClick={()=>changeQty(product,1)} aria-label="Increase quantity"><Plus size={12}/></button></div><button className="remove-line" onClick={()=>remove(product)} aria-label="Remove product"><X size={14}/></button></div>})}</div><div className="cart-totals"><div><span>Subtotal</span><b>{money(cartSubtotal)}</b></div><div className="savings-row"><span>Bundle savings</span><b>−{money(cartSavings)}</b></div><div className="cart-total"><span>Estimated total</span><b>{money(Math.max(0,cartSubtotal-cartSavings))}</b></div></div><button className="clear-basket" onClick={()=>{setBasket([]);setCartQty({});setDiscountedItems([]);setRecommendations([])}}>Clear basket</button></>}
+              <div className="add-on-title"><span><Sparkles size={14}/> Recommended for this basket</span><small>ADD & SAVE 10%</small></div>{basket.length===0?<p className="offer-hint">Add any product to get personalized add-on offers.</p>:busy?<p className="offer-hint">Finding products bought together…</p>:offerProducts.length?offerProducts.map((offer,i)=>{const item=productByName.get(offer.offerProduct);const price=Number(item?.unit_price||0);return <div className="addon-card" key={`${offer.offerProduct}-${i}`}><div className="addon-art"><PackageSearch size={19}/></div><div className="addon-copy"><b>{offer.offerProduct}</b><span>{price? <><s>{money(price)}</s> <strong>{money(price*.9)}</strong></>:'10% off when added'}</span><small>{(offer.confidence*100).toFixed(0)}% of matching baskets also include this</small></div><button onClick={()=>add(offer.offerProduct,true)} disabled={discountedItems.includes(offer.offerProduct)}>{discountedItems.includes(offer.offerProduct)?'Added ✓':'Add deal'}</button></div>}):<p className="offer-hint">No matching offer found for this basket yet. Try adding a popular product.</p>}
+              <div className="offer-disclaimer">Offer preview: the 10% add-on discount is simulated and applies to recommended items in this demo basket.</div>
+            </div></aside>
           </div>
-        </div>
-      </header>
-
-      {/* Main Container with Amazon Left Sidebar */}
-      <div className="amz-body">
-        <aside className="amz-sidebar">
-          <div className="sidebar-group">
-            <div className="sidebar-title">NAVIGATION MENU</div>
-            <button
-              className={`sidebar-link ${activeTab === 'marketplace' ? 'active' : ''}`}
-              onClick={() => setActiveTab('marketplace')}
-            >
-              <span className="icon">🏪</span> Marketplace Store
-            </button>
-            <button
-              className={`sidebar-link ${activeTab === 'analytics' ? 'active' : ''}`}
-              onClick={() => setActiveTab('analytics')}
-            >
-              <span className="icon">📈</span> PowerBI Executive BI
-            </button>
-            <button
-              className={`sidebar-link ${activeTab === 'recommender' ? 'active' : ''}`}
-              onClick={() => setActiveTab('recommender')}
-            >
-              <span className="icon">🛒</span> Shopping Cart & Checkout
-            </button>
-            <button
-              className={`sidebar-link ${activeTab === 'clusters' ? 'active' : ''}`}
-              onClick={() => setActiveTab('clusters')}
-            >
-              <span className="icon">👥</span> K-Means Customer Clusters
-            </button>
-            <button
-              className={`sidebar-link ${activeTab === 'rules' ? 'active' : ''}`}
-              onClick={() => setActiveTab('rules')}
-            >
-              <span className="icon">🔗</span> Association Rules Table
-            </button>
-          </div>
-
-          {/* PowerBI Interactive Controls in Sidebar */}
-          {activeTab === 'analytics' && (
-            <div className="sidebar-group sliders-group">
-              <div className="sidebar-title">POWERBI SLICERS & FILTERS</div>
-
-              <div className="slicer-box">
-                <label className="slicer-label">Metric Measure:</label>
-                <div className="btn-toggle-row">
-                  <button
-                    className={`toggle-btn ${metricView === 'revenue' ? 'active' : ''}`}
-                    onClick={() => setMetricView('revenue')}
-                  >
-                    Revenue (£)
-                  </button>
-                  <button
-                    className={`toggle-btn ${metricView === 'orders' ? 'active' : ''}`}
-                    onClick={() => setMetricView('orders')}
-                  >
-                    Orders
-                  </button>
-                </div>
-              </div>
-
-              <div className="slicer-box" style={{ marginTop: '12px' }}>
-                <label className="slicer-label">Time Interval:</label>
-                <div className="btn-toggle-row">
-                  <button
-                    className={`toggle-btn ${timeGranularity === 'monthly' ? 'active' : ''}`}
-                    onClick={() => setTimeGranularity('monthly')}
-                  >
-                    Monthly
-                  </button>
-                  <button
-                    className={`toggle-btn ${timeGranularity === 'quarterly' ? 'active' : ''}`}
-                    onClick={() => setTimeGranularity('quarterly')}
-                  >
-                    Quarterly
-                  </button>
-                </div>
-              </div>
-
-              <div className="slicer-box" style={{ marginTop: '12px' }}>
-                <label className="slicer-label">Region Filter:</label>
-                <select
-                  className="slicer-select"
-                  value={selectedCountryFilter}
-                  onChange={(e) => setSelectedCountryFilter(e.target.value)}
-                >
-                  <option value="All">All Regions (Global)</option>
-                  <option value="United Kingdom">United Kingdom Only</option>
-                  <option value="International">International Only</option>
-                  <option value="Netherlands">Netherlands</option>
-                  <option value="EIRE">EIRE (Ireland)</option>
-                  <option value="Germany">Germany</option>
-                  <option value="France">France</option>
-                  <option value="Australia">Australia</option>
-                </select>
-              </div>
-
-              <div className="slicer-box" style={{ marginTop: '12px' }}>
-                <label className="slicer-label">Customer Segment Slicer:</label>
-                <select
-                  className="slicer-select"
-                  value={selectedSegmentFilter}
-                  onChange={(e) => setSelectedSegmentFilter(e.target.value)}
-                >
-                  <option value="All">All Customer Segments</option>
-                  <option value="VIP / High-Value Champions">VIP / High-Value Champions</option>
-                  <option value="Loyal Regular Customers">Loyal Regular Customers</option>
-                  <option value="New / Recent Customers">New / Recent Customers</option>
-                  <option value="Lost / Inactive Customers">Lost / Inactive Customers</option>
-                </select>
-              </div>
-
-              <div className="slicer-box" style={{ marginTop: '12px' }}>
-                <label className="slicer-label">Date Range / Period:</label>
-                <div className="btn-toggle-row">
-                  <button
-                    className={`toggle-btn ${dateRangeFilter === 'all' ? 'active' : ''}`}
-                    onClick={() => setDateRangeFilter('all')}
-                  >
-                    Full History
-                  </button>
-                  <button
-                    className={`toggle-btn ${dateRangeFilter === '2011' ? 'active' : ''}`}
-                    onClick={() => setDateRangeFilter('2011')}
-                  >
-                    2011 YTD
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'recommender' && (
-            <div className="sidebar-group sliders-group">
-              <div className="sidebar-title">APRIORI PARAMETERS</div>
-              
-              <div className="amz-slider-box">
-                <label>Min Support: <strong>{(minSupport * 100).toFixed(1)}%</strong></label>
-                <input
-                  type="range"
-                  min="0"
-                  max="0.05"
-                  step="0.005"
-                  value={minSupport}
-                  onChange={(e) => { setMinSupport(Number(e.target.value)); setHasSearched(false); }}
-                />
-              </div>
-
-              <div className="amz-slider-box">
-                <label>Min Confidence: <strong>{(minConfidence * 100).toFixed(1)}%</strong></label>
-                <input
-                  type="range"
-                  min="0"
-                  max="0.8"
-                  step="0.05"
-                  value={minConfidence}
-                  onChange={(e) => { setMinConfidence(Number(e.target.value)); setHasSearched(false); }}
-                />
-              </div>
-            </div>
-          )}
-        </aside>
-
-        {/* Main Content Workspace */}
-        <main className="amz-content">
-          {/* VIEW 0: PROPER E-COMMERCE MARKETPLACE STORE */}
-          {activeTab === 'marketplace' && (
-            <div className="content-view">
-              <div className="view-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
-                <div>
-                  <h2>🏪 Retail Store Marketplace</h2>
-                  <p>Browse catalog products by category, inspect prices, and add items directly to your cart to prepare for Apriori basket mining.</p>
-                </div>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <button
-                    className="amz-btn-gold"
-                    onClick={() => setActiveTab('recommender')}
-                    style={{ padding: '8px 16px', fontSize: '13px' }}
-                  >
-                    🛒 View Cart ({totalBasketItemCount} {totalBasketItemCount === 1 ? 'item' : 'items'}) & Checkout
-                  </button>
-                </div>
-              </div>
-
-              {/* Category Filter Pills, Search, and Sort */}
-              <div className="amz-card" style={{ marginBottom: '20px', padding: '14px 18px' }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#475569' }}>Category:</span>
-                    {['All', 'Home & Decor', 'Bags & Storage', 'Kitchen & Dining', 'Toys & Novelty', 'Seasonal & Gifts', 'Stationery & Accessories'].map((cat) => (
-                      <button
-                        key={cat}
-                        className={`btn-pill ${marketCategory === cat ? 'active' : ''}`}
-                        onClick={() => {
-                          setMarketCategory(cat);
-                          fetchMarketplace(cat, marketSearch, marketSortBy, 1);
-                        }}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Sort By:</span>
-                      <select
-                        value={marketSortBy}
-                        onChange={(e) => {
-                          const newSort = e.target.value;
-                          setMarketSortBy(newSort);
-                          fetchMarketplace(marketCategory, marketSearch, newSort, 1);
-                        }}
-                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12.5px', background: '#fff', fontWeight: 600 }}
-                      >
-                        <option value="popular">🔥 Most Popular (Order Frequency)</option>
-                        <option value="price_asc">Price: Low to High</option>
-                        <option value="price_desc">Price: High to Low</option>
-                        <option value="name">Product Name (A-Z)</option>
-                      </select>
-                    </div>
-
-                    <input
-                      type="text"
-                      placeholder="Search 3,665+ items..."
-                      value={marketSearch}
-                      onChange={(e) => {
-                        const newQuery = e.target.value;
-                        setMarketSearch(newQuery);
-                        fetchMarketplace(marketCategory, newQuery, marketSortBy, 1);
-                      }}
-                      style={{ padding: '6px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', minWidth: '180px' }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>Showing <strong>{marketplaceProducts.length}</strong> of <strong>{marketTotalCount.toLocaleString()}</strong> catalog products (Page {marketPage} of {marketTotalPages})</span>
-                  <span>Products ranked by real historical transaction frequency</span>
-                </div>
-              </div>
-
-              {/* Product Grid */}
-              {loadingMarket ? (
-                <div className="loading-box">Loading marketplace catalog...</div>
-              ) : marketplaceProducts.length === 0 ? (
-                <div className="warning-box">No products found matching the selected category/search.</div>
-              ) : (
-                <>
-                  <div className="amz-products-grid">
-                    {marketplaceProducts.map((p, idx) => {
-                      const qtyInCart = basketQuantities[p.description] || 0;
-                      const isBestseller = p.orders_count >= 500;
-                      return (
-                        <div key={idx} className="amz-product-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                              <span className="card-badge">{p.category || 'RETAIL ITEM'}</span>
-                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>#{p.stock_code}</span>
-                            </div>
-                            <h4 className="prod-name" style={{ minHeight: '40px', fontSize: '14px', lineHeight: '1.3' }}>{p.description}</h4>
-                            
-                            {/* Popularity Indicator */}
-                            <div style={{ margin: '6px 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                background: isBestseller ? '#fef3c7' : '#f1f5f9',
-                                color: isBestseller ? '#b45309' : '#475569',
-                                padding: '2px 7px',
-                                borderRadius: '4px',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }}>
-                                {isBestseller ? '🔥 Popular Bestseller' : '📊 Frequent Purchase'}
-                              </span>
-                              <span style={{ fontSize: '11px', color: '#64748b' }}>
-                                Ordered in <strong>{Number(p.orders_count).toLocaleString()}</strong> baskets ({Number(p.total_quantity).toLocaleString()} units)
-                              </span>
-                            </div>
-                          </div>
-
-                          <div style={{ marginTop: '8px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
-                              <span style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>£{Number(p.unit_price).toFixed(2)}</span>
-                              <span style={{ fontSize: '11px', color: '#059669', fontWeight: 600 }}>In Stock (Verified)</span>
-                            </div>
-
-                            {qtyInCart > 0 ? (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: '#f8fafc', padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <button
-                                    onClick={() => decrementBasketItem(p.description)}
-                                    style={{ width: '28px', height: '28px', borderRadius: '4px', border: '1px solid #94a3b8', background: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                    title="Decrease quantity"
-                                  >
-                                    -
-                                  </button>
-                                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#0f172a', minWidth: '40px', textAlign: 'center' }}>
-                                    {qtyInCart} in Cart
-                                  </span>
-                                  <button
-                                    onClick={() => addToBasket(p.description)}
-                                    style={{ width: '28px', height: '28px', borderRadius: '4px', border: '1px solid #94a3b8', background: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                    title="Add one more"
-                                  >
-                                    +
-                                  </button>
-                                </div>
-                                <button
-                                  onClick={() => removeFromBasket(p.description)}
-                                  style={{ border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                className="toggle-btn active"
-                                onClick={() => addToBasket(p.description)}
-                                style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px', borderRadius: '4px' }}
-                              >
-                                ➕ Add to Cart
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Numbered Pagination Navigation */}
-                  {marketTotalPages > 1 && (
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      gap: '6px',
-                      marginTop: '25px',
-                      flexWrap: 'wrap',
-                      padding: '16px',
-                      background: '#fff',
-                      borderRadius: '8px',
-                      border: '1px solid #e2e8f0'
-                    }}>
-                      <button
-                        className="btn-pill"
-                        disabled={marketPage === 1}
-                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, 1)}
-                        style={{ opacity: marketPage === 1 ? 0.4 : 1, cursor: marketPage === 1 ? 'not-allowed' : 'pointer' }}
-                      >
-                        « First
-                      </button>
-                      <button
-                        className="btn-pill"
-                        disabled={marketPage === 1}
-                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, marketPage - 1)}
-                        style={{ opacity: marketPage === 1 ? 0.4 : 1, cursor: marketPage === 1 ? 'not-allowed' : 'pointer' }}
-                      >
-                        ‹ Prev
-                      </button>
-
-                      {/* Dynamic Page Number Windows */}
-                      {Array.from({ length: marketTotalPages }, (_, i) => i + 1)
-                        .filter(pageNum => (
-                          pageNum === 1 ||
-                          pageNum === marketTotalPages ||
-                          Math.abs(pageNum - marketPage) <= 2
-                        ))
-                        .map((pageNum, idx, arr) => {
-                          const prev = arr[idx - 1];
-                          const showEllipsis = prev && pageNum - prev > 1;
-                          return (
-                            <React.Fragment key={pageNum}>
-                              {showEllipsis && <span style={{ padding: '0 4px', color: '#94a3b8' }}>...</span>}
-                              <button
-                                className={`btn-pill ${marketPage === pageNum ? 'active' : ''}`}
-                                onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, pageNum)}
-                                style={{
-                                  fontWeight: marketPage === pageNum ? 700 : 500,
-                                  minWidth: '36px',
-                                  textAlign: 'center'
-                                }}
-                              >
-                                {pageNum}
-                              </button>
-                            </React.Fragment>
-                          );
-                        })}
-
-                      <button
-                        className="btn-pill"
-                        disabled={marketPage === marketTotalPages}
-                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, marketPage + 1)}
-                        style={{ opacity: marketPage === marketTotalPages ? 0.4 : 1, cursor: marketPage === marketTotalPages ? 'not-allowed' : 'pointer' }}
-                      >
-                        Next ›
-                      </button>
-                      <button
-                        className="btn-pill"
-                        disabled={marketPage === marketTotalPages}
-                        onClick={() => fetchMarketplace(marketCategory, marketSearch, marketSortBy, marketTotalPages)}
-                        style={{ opacity: marketPage === marketTotalPages ? 0.4 : 1, cursor: marketPage === marketTotalPages ? 'not-allowed' : 'pointer' }}
-                      >
-                        Last »
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* VIEW 1: POWERBI STYLE EXECUTIVE ANALYTICAL DASHBOARD */}
-          {activeTab === 'analytics' && analytics && (
-            <div className="content-view">
-              <div className="view-header">
-                <h2>PowerBI Business Intelligence Analytics Dashboard</h2>
-                <p>Enterprise data mining metrics computed across 392,692 retail transactions (Interactive Slicers Active).</p>
-              </div>
-
-              {/* KPI Summary Cards */}
-              <div className="kpi-row">
-                <div className="kpi-card">
-                  <span className="kpi-label">Total Unique Customers</span>
-                  <span className="kpi-val">{(filteredMetrics ? filteredMetrics.totalCustomers : analytics.total_customers).toLocaleString()}</span>
-                  <span className="kpi-sub">{selectedSegmentFilter !== 'All' ? selectedSegmentFilter : (selectedCountryFilter !== 'All' ? `${selectedCountryFilter} Users` : 'Cleaned Profiles')}</span>
-                </div>
-                <div className="kpi-card">
-                  <span className="kpi-label">Total Products Catalog</span>
-                  <span className="kpi-val">{analytics.total_products.toLocaleString()}</span>
-                  <span className="kpi-sub">Unique StockCodes</span>
-                </div>
-                <div className="kpi-card">
-                  <span className="kpi-label">Total Baskets / Invoices</span>
-                  <span className="kpi-val">{(filteredMetrics ? filteredMetrics.totalOrders : analytics.total_transactions).toLocaleString()}</span>
-                  <span className="kpi-sub">{selectedCountryFilter !== 'All' ? `${selectedCountryFilter} Orders` : 'Distinct Orders'}</span>
-                </div>
-                <div className="kpi-card highlight">
-                  <span className="kpi-label">Total Revenue</span>
-                  <span className="kpi-val">£{(filteredMetrics ? filteredMetrics.totalRevenue : analytics.total_revenue).toLocaleString()}</span>
-                  <span className="kpi-sub">{selectedCountryFilter !== 'All' ? `${selectedCountryFilter} Market` : 'Gross E-Commerce Sales'}</span>
-                </div>
-                <div className="kpi-card">
-                  <span className="kpi-label">Average Order Value (AOV)</span>
-                  <span className="kpi-val">£{(filteredMetrics ? filteredMetrics.avgOrderValue : analytics.avg_order_value).toFixed(2)}</span>
-                  <span className="kpi-sub">Spend per Basket</span>
-                </div>
-                <div className="kpi-card">
-                  <span className="kpi-label">Selected Filter Focus</span>
-                  <span className="kpi-val" style={{ fontSize: '15px' }}>{selectedCountryFilter !== 'All' ? selectedCountryFilter : 'Global Market'}</span>
-                  <span className="kpi-sub">{selectedSegmentFilter !== 'All' ? selectedSegmentFilter : 'All 4 Clusters'}</span>
-                </div>
-              </div>
-
-              {/* ROW 2: PowerBI LINE CHART (Monthly Sales Trends) */}
-              <div className="amz-card" style={{ marginTop: '20px' }}>
-                <div className="chart-header-row">
-                  <div>
-                    <h3>📈 Line Chart — Monthly Sales & Orders Trend</h3>
-                    <span className="chart-subtext">Continuous time series trajectory across 2010 - 2011 | Slicer Granularity: <strong>{timeGranularity.toUpperCase()}</strong> {dateRangeFilter === '2011' && ' (Filtered: 2011 YTD)'}</span>
-                  </div>
-                  <div className="chart-actions">
-                    <button
-                      className={`btn-pill ${timeGranularity === 'monthly' ? 'active' : ''}`}
-                      onClick={() => setTimeGranularity('monthly')}
-                    >
-                      Monthly
-                    </button>
-                    <button
-                      className={`btn-pill ${timeGranularity === 'quarterly' ? 'active' : ''}`}
-                      onClick={() => setTimeGranularity('quarterly')}
-                    >
-                      Quarterly
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ width: '100%', height: 260, marginTop: '15px' }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={timeGranularity === 'monthly' ? (filteredMetrics ? filteredMetrics.monthlyTrend : analytics.monthly_trend) : analytics.quarterly_trend}
-                      margin={{ top: 10, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey={timeGranularity === 'monthly' ? "MonthYear" : "Quarter"} stroke="#64748b" fontSize={12} />
-                      <YAxis stroke="#64748b" fontSize={12} tickFormatter={(val) => metricView === 'revenue' ? `£${(val / 1000).toFixed(0)}k` : val.toLocaleString()} />
-                      <Tooltip
-                        formatter={(val: any) => [metricView === 'revenue' ? `£${Number(val).toLocaleString()}` : Number(val).toLocaleString(), metricView === 'revenue' ? 'Revenue' : 'Orders']}
-                        contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', border: 'none', fontSize: '13px' }}
-                      />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey={metricView === 'revenue' ? "revenue" : (timeGranularity === 'monthly' ? "transactions" : "orders")}
-                        name={metricView === 'revenue' ? "Gross Revenue (£)" : "Distinct Orders"}
-                        stroke="#0284c7"
-                        strokeWidth={3}
-                        dot={{ r: 4, fill: '#0284c7' }}
-                        activeDot={{ r: 7 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* ROW 3: BAR CHART (Top-Selling Products) & DONUT CHART (Customer Segments) */}
-              <div className="grid-2col" style={{ marginTop: '25px' }}>
-                {/* Bar Chart — Top-selling products */}
-                <div className="amz-card">
-                  <div className="chart-header-row">
-                    <div>
-                      <h3>📊 Bar Chart — Top-Selling Products</h3>
-                      <span className="chart-subtext">Highest sales volume products across orders</span>
-                    </div>
-                  </div>
-                  <div style={{ width: '100%', height: 270, marginTop: '10px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        layout="vertical"
-                        data={(analytics.top_products || []).slice(0, 6).map((p: any) => {
-                          const desc = p.Description || p.description || 'Unknown Product';
-                          return {
-                            name: desc.length > 22 ? desc.substring(0, 22) + '...' : desc,
-                            fullName: desc,
-                            quantity: p.quantity || p.total_quantity || 0
-                          };
-                        })}
-                        margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
-                        <XAxis type="number" stroke="#64748b" fontSize={11} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                        <YAxis dataKey="name" type="category" stroke="#475569" fontSize={11} width={130} />
-                        <Tooltip
-                          formatter={(v: any, n: any, item: any) => [`${Number(v).toLocaleString()} units`, item.payload.fullName]}
-                          contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                        />
-                        <Bar dataKey="quantity" fill="#f59e0b" radius={[0, 4, 4, 0]} name="Units Sold" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* Donut Chart — Customer Segment Distribution */}
-                <div className="amz-card">
-                  <div className="chart-header-row">
-                    <div>
-                      <h3>🍩 Donut Chart — Customer Segment Distribution</h3>
-                      <span className="chart-subtext">K-Means RFM Segments with interactive vector slices</span>
-                    </div>
-                  </div>
-                  <div style={{ width: '100%', height: 270, marginTop: '10px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={Object.entries(filteredMetrics ? filteredMetrics.clusterDist : analytics.cluster_distribution).map(([name, count]: any) => ({
-                            name,
-                            value: count
-                          }))}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={55}
-                          outerRadius={95}
-                          paddingAngle={3}
-                          dataKey="value"
-                        >
-                          {Object.keys(filteredMetrics ? filteredMetrics.clusterDist : analytics.cluster_distribution).map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={CLUSTER_COLORS[entry] || CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          formatter={(val: any, name: any) => [`${Number(val).toLocaleString()} customers (${((Number(val) / (filteredMetrics ? filteredMetrics.totalCustomers : analytics.total_customers)) * 100).toFixed(1)}%)`, name]}
-                          contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                        />
-                        <Legend verticalAlign="bottom" height={36} iconSize={10} wrapperStyle={{ fontSize: '11px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-
-              {/* ROW 4: SCATTER PLOT (K-Means Recency vs Monetary) & STACKED COLUMN (Category Monthly) */}
-              <div className="grid-2col" style={{ marginTop: '25px' }}>
-                {/* Scatter plot — Customer segmentation using K-means */}
-                <div className="amz-card">
-                  <div className="chart-header-row">
-                    <div>
-                      <h3>🎯 Scatter Plot — Customer Segmentation (K-Means)</h3>
-                      <span className="chart-subtext">Recency (Days) vs Monetary Spend (£) colored by Cluster</span>
-                    </div>
-                  </div>
-                  <div style={{ width: '100%', height: 270, marginTop: '10px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis
-                          type="number"
-                          dataKey="Recency"
-                          name="Recency"
-                          unit="d"
-                          stroke="#64748b"
-                          fontSize={11}
-                          label={{ value: 'Recency (Days)', position: 'insideBottom', offset: -10, fontSize: 11, fill: '#64748b' }}
-                        />
-                        <YAxis
-                          type="number"
-                          dataKey="Monetary"
-                          name="Monetary"
-                          unit="£"
-                          stroke="#64748b"
-                          fontSize={11}
-                          tickFormatter={(v) => `£${(v / 1000).toFixed(0)}k`}
-                          label={{ value: 'Monetary Spend', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }}
-                        />
-                        <ZAxis range={[25, 30]} />
-                        <Tooltip
-                          cursor={{ strokeDasharray: '3 3' }}
-                          formatter={(val: any, name: any, item: any) => {
-                            if (name === 'Recency') return [`${val} days`, 'Recency'];
-                            if (name === 'Monetary') return [`£${Number(val).toLocaleString()}`, 'Monetary'];
-                            return [val, name];
-                          }}
-                          contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                        />
-                        {["VIP / High-Value Champions", "Loyal Regular Customers", "New / Recent Customers", "Lost / Inactive Customers"].map((seg) => {
-                          const clusterData = (analytics.scatter_data || []).filter((d: any) => {
-                            if (selectedSegmentFilter !== 'All' && d.Segment_Name !== selectedSegmentFilter) return false;
-                            return d.Segment_Name === seg;
-                          });
-                          return (
-                            <Scatter
-                              key={seg}
-                              name={seg}
-                              data={clusterData}
-                              fill={CLUSTER_COLORS[seg] || '#3b82f6'}
-                            />
-                          );
-                        })}
-                        <Legend verticalAlign="top" height={30} wrapperStyle={{ fontSize: '11px' }} />
-                      </ScatterChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* Stacked column chart — Sales by category and month */}
-                <div className="amz-card">
-                  <div className="chart-header-row">
-                    <div>
-                      <h3>📚 Stacked Column Chart — Sales by Category & Month</h3>
-                      <span className="chart-subtext">Product category revenue contribution across months</span>
-                    </div>
-                  </div>
-                  <div style={{ width: '100%', height: 270, marginTop: '10px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={analytics.stacked_category_monthly || []}
-                        margin={{ top: 10, right: 15, left: 10, bottom: 5 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="Month" stroke="#64748b" fontSize={11} />
-                        <YAxis stroke="#64748b" fontSize={11} tickFormatter={(v) => `£${(v / 1000).toFixed(0)}k`} />
-                        <Tooltip
-                          formatter={(v: any, name: any) => [`£${Number(v).toLocaleString()}`, name]}
-                          contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                        />
-                        <Legend wrapperStyle={{ fontSize: '10px' }} />
-                        <Bar dataKey="Home & Decor" stackId="a" fill="#3b82f6" />
-                        <Bar dataKey="Stationery & Accessories" stackId="a" fill="#10b981" />
-                        <Bar dataKey="Bags & Storage" stackId="a" fill="#f59e0b" />
-                        <Bar dataKey="Kitchen & Dining" stackId="a" fill="#8b5cf6" />
-                        <Bar dataKey="Seasonal & Gifts" stackId="a" fill="#ec4899" />
-                        <Bar dataKey="Toys & Novelty" stackId="a" fill="#06b6d4" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-
-              {/* ROW 5: TREEMAP (Product Sales Contribution) & REGIONAL DONUT */}
-              <div className="grid-2col" style={{ marginTop: '25px' }}>
-                {/* Treemap — Product sales contribution */}
-                <div className="amz-card">
-                  <div className="chart-header-row">
-                    <div>
-                      <h3>🗺️ Treemap — Product Category Sales Contribution</h3>
-                      <span className="chart-subtext">Proportional revenue share by retail category hierarchy</span>
-                    </div>
-                  </div>
-                  <div style={{ width: '100%', height: 260, marginTop: '10px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <Treemap
-                        data={(analytics.category_contributions || []).map((c: any, idx: number) => ({
-                          name: c.Category,
-                          size: c.revenue,
-                          fill: CATEGORY_COLORS[idx % CATEGORY_COLORS.length]
-                        }))}
-                        dataKey="size"
-                        stroke="#fff"
-                        fill="#3b82f6"
-                      >
-                        <Tooltip
-                          formatter={(v: any, name: any, item: any) => [`£${Number(v).toLocaleString()}`, item.payload.name]}
-                          contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                        />
-                      </Treemap>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* Donut Chart — Regional Share (UK vs International) */}
-                <div className="amz-card">
-                  <div className="chart-header-row">
-                    <div>
-                      <h3>🌐 Donut Chart — Geographical Sales Distribution</h3>
-                      <span className="chart-subtext">Domestic UK vs International E-commerce revenue</span>
-                    </div>
-                  </div>
-                  <div style={{ width: '100%', height: 260, marginTop: '10px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: 'United Kingdom', value: analytics.regional_distribution["United Kingdom"] },
-                            { name: 'International', value: analytics.regional_distribution["International"] }
-                          ]}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={55}
-                          outerRadius={95}
-                          paddingAngle={4}
-                          dataKey="value"
-                        >
-                          <Cell fill="#0284c7" />
-                          <Cell fill="#f97316" />
-                        </Pie>
-                        <Tooltip
-                          formatter={(val: any, name: any) => {
-                            const total = analytics.regional_distribution["United Kingdom"] + analytics.regional_distribution["International"];
-                            return [`£${Number(val).toLocaleString()} (${((Number(val) / total) * 100).toFixed(1)}%)`, name];
-                          }}
-                          contentStyle={{ backgroundColor: '#1e293b', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                        />
-                        <Legend verticalAlign="bottom" height={36} iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-
-              {/* ROW 6: MATRIX — Detailed Country-Wise Sales Analysis Table */}
-              <div className="amz-card" style={{ marginTop: '25px' }}>
-                <div className="chart-header-row">
-                  <div>
-                    <h3>🌍 Matrix — Detailed Country-Wise Sales Analysis</h3>
-                    <span className="chart-subtext">Geographical revenue, orders, distinct customers, units sold, and average order value (AOV)</span>
-                  </div>
-                  <span className="badge-powerbi">37 Global Markets</span>
-                </div>
-                <div className="table-scroll-wrapper" style={{ maxHeight: '320px', overflowY: 'auto', marginTop: '12px' }}>
-                  <table className="amz-table">
-                    <thead>
-                      <tr>
-                        <th>Country</th>
-                        <th>Revenue (£)</th>
-                        <th>Orders</th>
-                        <th>Customers</th>
-                        <th>Items Sold</th>
-                        <th>Average Order Value</th>
-                        <th>Market Share</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(analytics.country_matrix || analytics.country_distribution || []).filter((c: any) => {
-                        if (selectedCountryFilter === 'All') return true;
-                        if (selectedCountryFilter === 'United Kingdom') return c.Country === 'United Kingdom';
-                        if (selectedCountryFilter === 'International') return c.Country !== 'United Kingdom';
-                        return c.Country === selectedCountryFilter;
-                      }).map((c: any, idx: number) => {
-                        const totalRev = analytics.total_revenue;
-                        const share = ((c.revenue / totalRev) * 100).toFixed(2);
-                        return (
-                          <tr key={idx}>
-                            <td><strong>{c.Country}</strong></td>
-                            <td><strong style={{ color: '#059669' }}>£{c.revenue.toLocaleString()}</strong></td>
-                            <td>{c.orders ? c.orders.toLocaleString() : '-'}</td>
-                            <td>{c.customers ? c.customers.toLocaleString() : '-'}</td>
-                            <td>{c.items_sold ? c.items_sold.toLocaleString() : '-'}</td>
-                            <td><strong>£{c.aov ? c.aov.toFixed(2) : '-'}</strong></td>
-                            <td>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <div style={{ width: '60px', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                                  <div style={{ width: `${Math.min(100, Math.max(3, parseFloat(share)))}%`, height: '100%', backgroundColor: '#0284c7' }}></div>
-                                </div>
-                                <span style={{ fontSize: '11px', color: '#64748b' }}>{share}%</span>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* ROW 7: Hourly Peak Hours & Day of Week Pattern */}
-              <div className="grid-2col" style={{ marginTop: '25px' }}>
-                <div className="amz-card">
-                  <h3>⏰ Peak Transaction Hours (Hourly Breakdown)</h3>
-                  <div className="chart-bars" style={{ height: '170px' }}>
-                    {analytics.hourly_distribution.map((h: any, idx: number) => {
-                      const maxTx = Math.max(...analytics.hourly_distribution.map((x: any) => x.transactions));
-                      const heightPct = Math.round((h.transactions / maxTx) * 100);
-                      return (
-                        <div key={idx} className="bar-col">
-                          <div className="bar-fill blue-fill" style={{ height: `${heightPct}%` }}>
-                            <span className="bar-tooltip">{h.transactions}</span>
-                          </div>
-                          <span className="bar-label">{h.hour}:00</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="amz-card">
-                  <h3>📆 Day of Week Shopping Frequency</h3>
-                  <div className="list-rows">
-                    {analytics.day_distribution.map((d: any, idx: number) => {
-                      const maxDay = Math.max(...analytics.day_distribution.map((x: any) => x.transactions));
-                      const widthPct = Math.round((d.transactions / maxDay) * 100);
-                      return (
-                        <div key={idx} className="data-row-container">
-                          <div className="data-row-header">
-                            <span className="row-title">{d.day}</span>
-                            <span className="row-stat">{d.transactions.toLocaleString()} orders</span>
-                          </div>
-                          <div className="row-bar-bg">
-                            <div className="row-bar-fill" style={{ width: `${widthPct}%` }}></div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* ROW 8: Product Price Range Distribution & Order Basket Sizing */}
-              <div className="grid-2col" style={{ marginTop: '25px' }}>
-                <div className="amz-card">
-                  <h3>🏷️ Product Catalog Price Range Breakdown</h3>
-                  <div className="list-rows">
-                    {Object.entries(analytics.price_distribution).map(([band, count]: any, idx: number) => {
-                      const maxCount = Math.max(...Object.values(analytics.price_distribution) as number[]);
-                      const pct = Math.round((count / maxCount) * 100);
-                      return (
-                        <div key={idx} className="data-row-container">
-                          <div className="data-row-header">
-                            <span className="row-title">{band}</span>
-                            <span className="row-stat">{count.toLocaleString()} products</span>
-                          </div>
-                          <div className="row-bar-bg">
-                            <div className="row-bar-fill orange-fill" style={{ width: `${pct}%` }}></div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="amz-card">
-                  <h3>📦 Order Basket Size Segmentation</h3>
-                  <div className="list-rows">
-                    {Object.entries(analytics.basket_size_distribution).map(([cat, count]: any, idx: number) => {
-                      const maxB = Math.max(...Object.values(analytics.basket_size_distribution) as number[]);
-                      const pct = Math.round((count / maxB) * 100);
-                      return (
-                        <div key={idx} className="data-row-container">
-                          <div className="data-row-header">
-                            <span className="row-title">{cat}</span>
-                            <span className="row-stat">{count.toLocaleString()} invoices</span>
-                          </div>
-                          <div className="row-bar-bg">
-                            <div className="row-bar-fill green-fill" style={{ width: `${pct}%` }}></div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* ROW 9: Top 5 Highest Spending Customers */}
-              <div className="amz-card" style={{ marginTop: '25px' }}>
-                <h3>⭐ Top 5 Highest Spending Customers</h3>
-                <table className="amz-table">
-                  <thead>
-                    <tr>
-                      <th>Customer ID</th>
-                      <th>Orders</th>
-                      <th>Total Spend</th>
-                      <th>Cluster</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analytics.top_customers.map((c: any, idx: number) => (
-                      <tr key={idx}>
-                        <td><strong>#{c.CustomerID}</strong></td>
-                        <td>{c.Frequency} orders</td>
-                        <td><strong style={{ color: '#059669' }}>£{c.Monetary.toLocaleString()}</strong></td>
-                        <td><span className="segment-badge">{c.Segment_Name}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-
-
-              {/* ROW 7: Full RFM Segmentation Breakdown */}
-              <div className="amz-card" style={{ marginTop: '25px' }}>
-                <h3>👥 K-Means RFM Segment Profiles & Averages</h3>
-                <table className="amz-table">
-                  <thead>
-                    <tr>
-                      <th>Cluster Segment</th>
-                      <th>Avg Recency (Days)</th>
-                      <th>Avg Frequency (Orders)</th>
-                      <th>Avg Monetary Spend</th>
-                      <th>Customer Count</th>
-                      <th>Strategic Action Plan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analytics.rfm_cluster_means.map((c: any, idx: number) => (
-                      <tr key={idx}>
-                        <td><strong>{c.Segment_Name}</strong></td>
-                        <td>{c.Recency.toFixed(1)} days</td>
-                        <td>{c.Frequency.toFixed(1)} orders</td>
-                        <td>£{c.Monetary.toFixed(2)}</td>
-                        <td><span className="segment-badge">{c.CustomerID}</span></td>
-                        <td>
-                          {c.Segment_Name.includes('VIP') && <span className="action-tag vip">Exclusive Perks & Loyalty Program</span>}
-                          {c.Segment_Name.includes('Loyal') && <span className="action-tag loyal">Cross-sell & Seasonal Bundles</span>}
-                          {c.Segment_Name.includes('New') && <span className="action-tag new">Welcome Offers & Nurture Series</span>}
-                          {c.Segment_Name.includes('Lost') && <span className="action-tag lost">Win-Back Discounts & Re-engagement</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* VIEW 2: APRIORI RECOMMENDER */}
-          {activeTab === 'recommender' && (
-            <div className="content-view">
-              <div className="view-header">
-                <h2>Amazon-Style Basket Recommendation Engine</h2>
-                <p>Add items to your basket to generate explainable association rule recommendations derived via Apriori (Support & Confidence).</p>
-              </div>
-
-              <div className="amz-card" style={{ marginBottom: '25px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3>🛒 Shopping Cart ({totalBasketItemCount} {totalBasketItemCount === 1 ? 'total item' : 'total items'} · {selectedBasket.length} unique)</h3>
-                  {selectedBasket.length > 0 && (
-                    <button
-                      onClick={() => { setBasketQuantities({}); setRecommendations([]); setIsCheckedOut(false); }}
-                      style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
-                    >
-                      Clear Cart
-                    </button>
-                  )}
-                </div>
-
-                {selectedBasket.length === 0 ? (
-                  <div className="empty-msg" style={{ marginTop: '12px' }}>
-                    Your shopping cart is currently empty. Use the search bar at the top or the <strong>Marketplace</strong> tab to add products.
-                  </div>
-                ) : (
-                  <>
-                    <div className="chips-row" style={{ marginTop: '12px' }}>
-                      {selectedBasket.map((item, idx) => {
-                        const qty = basketQuantities[item] || 1;
-                        return (
-                          <div key={idx} className="amz-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                            <span><strong>{item}</strong></span>
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fed7aa', padding: '1px 6px', borderRadius: '12px' }}>
-                              <button
-                                onClick={() => decrementBasketItem(item)}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', fontWeight: 800, fontSize: '13px', color: '#c2410c' }}
-                                title="Decrease quantity"
-                              >
-                                -
-                              </button>
-                              <span style={{ fontWeight: 800, fontSize: '11px', color: '#7c2d12', padding: '0 2px' }}>
-                                × {qty}
-                              </span>
-                              <button
-                                onClick={() => addToBasket(item)}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', fontWeight: 800, fontSize: '13px', color: '#c2410c' }}
-                                title="Increase quantity"
-                              >
-                                +
-                              </button>
-                            </div>
-                            <button
-                              onClick={() => removeFromBasket(item)}
-                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#991b1b', fontWeight: 800, fontSize: '13px', marginLeft: '4px' }}
-                              title="Remove item"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div style={{ marginTop: '20px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button
-                        className="amz-btn-gold"
-                        disabled={selectedBasket.length === 0 || loadingRecs}
-                        onClick={handleProceedToCheckout}
-                        style={{ fontSize: '14px', padding: '10px 22px', fontWeight: 700 }}
-                      >
-                        {loadingRecs ? 'Analyzing Basket...' : '💳 Proceed to Checkout (Get Auto-Recommendations)'}
-                      </button>
-                      {isCheckedOut && (
-                        <span style={{ color: '#059669', fontSize: '13px', fontWeight: 600 }}>
-                          ✅ Checkout mode active — Auto-recommendations generated below!
-                        </span>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Recommendation Results (Displayed automatically upon Proceed to Checkout) */}
-              <div className="view-header">
-                <h3>Recommended Add-ons ("Customers who bought your cart items also bought...")</h3>
-              </div>
-
-              {loadingRecs && <div className="loading-box">Running Apriori basket rule inference...</div>}
-
-              {!loadingRecs && !isCheckedOut && selectedBasket.length > 0 && (
-                <div className="info-box">
-                  Review your items above and click <strong>Proceed to Checkout</strong> to automatically discover complementary pairing recommendations.
-                </div>
-              )}
-
-              {!loadingRecs && isCheckedOut && recommendations.length === 0 && (
-                <div className="warning-box">
-                  No Apriori pairing rules passed the active threshold settings (Min Support: {(minSupport * 100).toFixed(1)}%, Min Confidence: {(minConfidence * 100).toFixed(1)}%). Try relaxing the sliders in the sidebar.
-                </div>
-              )}
-
-              {!loadingRecs && hasSearched && recommendations.length > 0 && (
-                <div className="amz-products-grid">
-                  {recommendations.map((rec, idx) => (
-                    <div key={idx} className="amz-product-card">
-                      <div className="card-badge">RECOMMENDED PAIRING #{idx + 1}</div>
-                      <h4 className="prod-name">{rec.recommended_product}</h4>
-                      <p className="prod-exp">💡 {rec.explanation}</p>
-                      
-                      <div className="metrics-pill-row">
-                        <span className="metric-pill">Confidence: {(rec.confidence * 100).toFixed(1)}%</span>
-                        <span className="metric-pill">Support: {(rec.support * 100).toFixed(2)}%</span>
-                      </div>
-
-                      <div className="rule-string">Rule: {rec.matched_rule}</div>
-
-                      <div style={{ marginTop: '8px' }}>
-                        <button
-                          className="toggle-btn active"
-                          style={{ width: '100%', padding: '6px 10px', fontSize: '12px' }}
-                          onClick={() => {
-                            (rec.recommended_products || [rec.recommended_product]).forEach((p: string) => addToBasket(p));
-                          }}
-                        >
-                          🛒 Add Recommended to Cart
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* VIEW 3: CUSTOMER CLUSTERS TABLE */}
-          {activeTab === 'clusters' && (
-            <div className="content-view">
-              <div className="view-header">
-                <h2>K-Means RFM Customer Segments</h2>
-                <p>Derived via Python `scikit-learn` KMeans model on scaled Recency, Frequency, and Monetary metrics.</p>
-              </div>
-
-              <div className="amz-card">
-                <table className="amz-table">
-                  <thead>
-                    <tr>
-                      <th>Customer ID</th>
-                      <th>Recency (Days)</th>
-                      <th>Frequency (Orders)</th>
-                      <th>Monetary Spend</th>
-                      <th>Assigned K-Means Cluster</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {customers.slice(0, 40).map((c) => (
-                      <tr key={c.CustomerID}>
-                        <td><strong>{c.CustomerID}</strong></td>
-                        <td>{c.Recency} days</td>
-                        <td>{c.Frequency} orders</td>
-                        <td>£{c.Monetary.toLocaleString()}</td>
-                        <td><span className="segment-badge">{c.Segment_Name}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* VIEW 4: APRIORI RULES TABLE */}
-          {activeTab === 'rules' && (() => {
-            // Filter and sort rules
-            const filteredRules = rules.filter((r) => {
-              const ant = String(r.antecedents || '').toUpperCase();
-              const cons = String(r.consequents || '').toUpperCase();
-              const term = rulesSearch.trim().toUpperCase();
-              const matchesSearch = !term || ant.includes(term) || cons.includes(term);
-
-              if (!matchesSearch) return false;
-
-              const isMulti = ant.includes(',') || cons.includes(',');
-              if (rulesFilterType === 'single') return !isMulti;
-              if (rulesFilterType === 'multi') return isMulti;
-              return true;
-            }).sort((a, b) => {
-              if (rulesSortBy === 'confidence') return (b.confidence || 0) - (a.confidence || 0);
-              return (b.support || 0) - (a.support || 0);
-            });
-
-            const totalPages = Math.ceil(filteredRules.length / rulesPerPage) || 1;
-            const currentPage = Math.min(rulesPage, totalPages);
-            const paginatedRules = filteredRules.slice((currentPage - 1) * rulesPerPage, currentPage * rulesPerPage);
-
-            return (
-              <div className="content-view">
-                <div className="view-header">
-                  <h2>Mined Apriori Association Rules</h2>
-                  <p>Mined across 18,532 basket transactions using downward closure property (Support & Confidence).</p>
-                </div>
-
-                {/* Rules Interactive Slicer & Filter Bar */}
-                <div className="amz-card" style={{ marginBottom: '18px', padding: '16px' }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flex: 1, minWidth: '260px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>🔍 Search Product:</span>
-                      <input
-                        type="text"
-                        placeholder="Filter by product name (e.g. TEACUP, BAG, HEART)..."
-                        value={rulesSearch}
-                        onChange={(e) => { setRulesSearch(e.target.value); setRulesPage(1); }}
-                        style={{ flex: 1, padding: '7px 12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>Rule Type:</span>
-                        <select
-                          className="slicer-select"
-                          value={rulesFilterType}
-                          onChange={(e: any) => { setRulesFilterType(e.target.value); setRulesPage(1); }}
-                          style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px' }}
-                        >
-                          <option value="all">All Rules ({rules.length})</option>
-                          <option value="single">Single Item Pairs (A ➔ B)</option>
-                          <option value="multi">Multi-Item Bundles (A+B ➔ C or A ➔ B+C)</option>
-                        </select>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>Sort By:</span>
-                        <select
-                          className="slicer-select"
-                          value={rulesSortBy}
-                          onChange={(e: any) => setRulesSortBy(e.target.value)}
-                          style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px' }}
-                        >
-                          <option value="confidence">Highest Confidence (%)</option>
-                          <option value="support">Highest Support (%)</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: '10px', fontSize: '12px', color: '#64748b' }}>
-                    Showing <strong>{filteredRules.length}</strong> matching rules | Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
-                  </div>
-                </div>
-
-                <div className="amz-card">
-                  <table className="amz-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Antecedents (If Customer Buys...)</th>
-                        <th>Consequents (Then Recommend...)</th>
-                        <th>Rule Pattern</th>
-                        <th>Support (%)</th>
-                        <th>Confidence (%)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedRules.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', padding: '25px', color: '#64748b' }}>
-                            No association rules matched your filter criteria.
-                          </td>
-                        </tr>
-                      ) : (
-                        paginatedRules.map((r, idx) => {
-                          const globalIdx = (currentPage - 1) * rulesPerPage + idx + 1;
-                          const isMulti = String(r.antecedents).includes(',') || String(r.consequents).includes(',');
-                          return (
-                            <tr key={globalIdx}>
-                              <td><span style={{ color: '#94a3b8', fontSize: '12px' }}>{globalIdx}</span></td>
-                              <td><strong>{r.antecedents}</strong></td>
-                              <td className="text-orange"><strong>{r.consequents}</strong></td>
-                              <td>
-                                {isMulti ? (
-                                  <span style={{ backgroundColor: '#fef3c7', color: '#b45309', padding: '2px 7px', borderRadius: '10px', fontSize: '11px', fontWeight: 600 }}>
-                                    Multi-Item Bundle
-                                  </span>
-                                ) : (
-                                  <span style={{ backgroundColor: '#f1f5f9', color: '#475569', padding: '2px 7px', borderRadius: '10px', fontSize: '11px' }}>
-                                    Pair (1 ➔ 1)
-                                  </span>
-                                )}
-                              </td>
-                              <td><strong>{(r.support * 100).toFixed(2)}%</strong></td>
-                              <td><strong style={{ color: '#059669' }}>{(r.confidence * 100).toFixed(2)}%</strong></td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-
-                  {/* Pagination Navigation Bar */}
-                  {totalPages > 1 && (
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', marginTop: '20px', paddingBottom: '10px' }}>
-                      <button
-                        className="btn-pill"
-                        disabled={currentPage === 1}
-                        onClick={() => setRulesPage((prev) => Math.max(1, prev - 1))}
-                        style={{ cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}
-                      >
-                        ◀ Previous
-                      </button>
-
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
-                        // Display sliding window around current page
-                        if (totalPages > 10 && Math.abs(p - currentPage) > 3 && p !== 1 && p !== totalPages) {
-                          if (Math.abs(p - currentPage) === 4) {
-                            return <span key={p} style={{ color: '#94a3b8' }}>...</span>;
-                          }
-                          return null;
-                        }
-
-                        return (
-                          <button
-                            key={p}
-                            className={`btn-pill ${currentPage === p ? 'active' : ''}`}
-                            onClick={() => setRulesPage(p)}
-                            style={{ minWidth: '32px', textAlign: 'center' }}
-                          >
-                            {p}
-                          </button>
-                        );
-                      })}
-
-                      <button
-                        className="btn-pill"
-                        disabled={currentPage === totalPages}
-                        onClick={() => setRulesPage((prev) => Math.min(totalPages, prev + 1))}
-                        style={{ cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}
-                      >
-                        Next ▶
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-        </main>
+        </>}
+        {!loading && tab === 'overview' && <>
+          <div className="page-heading"><div><div className="eyebrow">RETAIL PERFORMANCE</div><h1>Good morning<span className="period-dot">.</span></h1><p>Your store performance and customer behavior at a glance.</p></div><button className="button-secondary" onClick={load}><RefreshCw size={15}/> Refresh data</button></div>
+          <section className="kpi-grid">
+            <Kpi label="Total revenue" value={money(analytics?.total_revenue)} sub="Across all completed orders" icon={<Activity/>} tone="purple" />
+            <Kpi label="Transactions" value={Number(analytics?.total_transactions || 0).toLocaleString()} sub="Unique customer invoices" icon={<ShoppingBasket/>} tone="blue" />
+            <Kpi label="Customers" value={Number(analytics?.total_customers || 0).toLocaleString()} sub="Identified retail customers" icon={<Users/>} tone="green" />
+            <Kpi label="Products" value={Number(analytics?.total_products || 0).toLocaleString()} sub="Distinct catalog items" icon={<PackageSearch/>} tone="amber" />
+          </section>
+          <section className="chart-grid">
+            <div className="panel revenue-panel"><div className="panel-head"><div><h2>Revenue over time</h2><p>Monthly sales performance</p></div><span className="tag"><i/> Revenue</span></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={analytics?.monthly_trend || []} margin={{top:10,right:16,left:0,bottom:0}}><CartesianGrid stroke="#edf0f5" vertical={false}/><XAxis dataKey="MonthYear" tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:11}}/><YAxis tickFormatter={v => `£${Math.round(v/1000)}k`} tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:11}}/><Tooltip formatter={(v:any)=>[money(v),'Revenue']} contentStyle={{borderRadius:12,border:'1px solid #edf0f5',boxShadow:'0 8px 24px #19234412'}}/><Line type="monotone" dataKey="revenue" stroke="#6267e8" strokeWidth={3} dot={false} activeDot={{r:5,fill:'#6267e8'}}/></LineChart></ResponsiveContainer></div></div>
+            <div className="panel segment-panel"><div className="panel-head"><div><h2>Customer mix</h2><p>RFM customer segments</p></div><span className="subtle-link" onClick={()=>setTab('customers')}>View segments →</span></div><div className="chart donut-chart"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={Object.entries(analytics?.cluster_distribution || {}).map(([name,value])=>({name,value}))} dataKey="value" nameKey="name" innerRadius={63} outerRadius={88} paddingAngle={3} stroke="none">{Object.keys(analytics?.cluster_distribution || {}).map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer><div className="donut-center"><b>{Number(analytics?.total_customers || 0).toLocaleString()}</b><span>customers</span></div></div><div className="legend-list">{Object.entries(analytics?.cluster_distribution || {}).map(([name,value],i)=><div key={name}><i style={{background:COLORS[i%COLORS.length]}}/><span>{name}</span><b>{Number(value).toLocaleString()}</b></div>)}</div></div>
+          </section>
+          <section className="lower-grid"><div className="panel"><div className="panel-head"><div><h2>Top products</h2><p>Best sellers by quantity</p></div><span className="subtle-link" onClick={()=>setTab('basket')}>Explore baskets →</span></div><div className="chart product-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={(analytics?.top_products || []).slice(0,7)} layout="vertical" margin={{left:5,right:20}}><CartesianGrid stroke="#edf0f5" horizontal={false}/><XAxis type="number" hide/><YAxis type="category" dataKey="Description" width={155} tickLine={false} axisLine={false} tick={{fill:'#667085',fontSize:11}}/><Tooltip/><Bar dataKey="quantity" fill="#8589ee" radius={[0,5,5,0]} barSize={16}/></BarChart></ResponsiveContainer></div></div><div className="panel algo-panel"><div className="panel-head"><div><h2>Mining toolkit</h2><p>Three methods, two analytical tasks</p></div><BrainCircuit size={18} className="head-icon"/></div><div className="algo-row"><span className="algo-icon purple"><Boxes size={17}/></span><div><b>Apriori</b><small>Association rule mining · baseline</small></div><span className="algo-state">READY</span></div><div className="algo-row"><span className="algo-icon blue"><Sparkles size={17}/></span><div><b>FP-Growth</b><small>Association rule mining · scalable</small></div><span className="algo-state">READY</span></div><div className="algo-row"><span className="algo-icon green"><Users size={17}/></span><div><b>K-Means</b><small>Customer segmentation · RFM</small></div><span className="algo-state">READY</span></div><div className="note-box">Association algorithms find products purchased together. K-Means groups customers by recency, frequency, and spend.</div></div></section>
+          <section className="analysis-grid">
+            <div className="panel analytical-panel"><div className="panel-head"><div><h2>Revenue by country</h2><p>Top sales markets in the dataset</p></div><span className="tag"><i/> Market view</span></div><div className="analysis-chart country-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={analytics?.country_distribution || []} layout="vertical" margin={{left:4,right:22,top:4,bottom:0}}><CartesianGrid stroke="#edf0f5" horizontal={false}/><XAxis type="number" tickFormatter={v=>`£${Math.round(v/1000)}k`} tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:10}}/><YAxis type="category" dataKey="Country" width={118} tickLine={false} axisLine={false} tick={{fill:'#667085',fontSize:10}}/><Tooltip formatter={(v:any)=>[money(v),'Revenue']}/><Bar dataKey="revenue" fill="#696de7" radius={[0,5,5,0]} barSize={16}/></BarChart></ResponsiveContainer></div></div>
+            <div className="panel analytical-panel"><div className="panel-head"><div><h2>When customers shop</h2><p>Distinct invoices by day of week</p></div><span className="tag"><i/> Demand pattern</span></div><div className="analysis-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={analytics?.day_distribution || []} margin={{left:-18,right:4,top:15,bottom:0}}><CartesianGrid stroke="#edf0f5" vertical={false}/><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><YAxis tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><Tooltip/><Bar dataKey="transactions" name="Invoices" fill="#42b38c" radius={[5,5,0,0]} barSize={24}/></BarChart></ResponsiveContainer></div></div>
+          </section>
+          <section className="analysis-grid">
+            <div className="panel analytical-panel"><div className="panel-head"><div><h2>Sales by hour</h2><p>Invoice activity across the day</p></div><span className="tag"><i/> Hourly</span></div><div className="analysis-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.hourly_distribution || []} margin={{left:-18,right:5,top:12,bottom:0}}><defs><linearGradient id="hourFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#898cf0" stopOpacity={.28}/><stop offset="95%" stopColor="#898cf0" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#edf0f5" vertical={false}/><XAxis dataKey="hour" tickFormatter={v=>`${v}:00`} tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><YAxis tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><Tooltip labelFormatter={v=>`${v}:00`}/><Area type="monotone" dataKey="transactions" name="Invoices" stroke="#696de7" fill="url(#hourFill)" strokeWidth={2.5}/></AreaChart></ResponsiveContainer></div></div>
+            <div className="panel analytical-panel"><div className="panel-head"><div><h2>Order size distribution</h2><p>Invoices grouped by total item quantity</p></div><span className="tag"><i/> Basket profile</span></div><div className="analysis-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={Object.entries(analytics?.basket_size_distribution || {}).map(([name,value])=>({name,orders:value}))} layout="vertical" margin={{left:8,right:22,top:6,bottom:0}}><CartesianGrid stroke="#edf0f5" horizontal={false}/><XAxis type="number" tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><YAxis type="category" dataKey="name" width={148} tickLine={false} axisLine={false} tick={{fill:'#667085',fontSize:9}}/><Tooltip/><Bar dataKey="orders" name="Invoices" fill="#e3a84e" radius={[0,5,5,0]} barSize={17}/></BarChart></ResponsiveContainer></div></div>
+          </section>
+          <section className="analysis-grid">
+            <div className="panel analytical-panel"><div className="panel-head"><div><h2>Category contribution</h2><p>Revenue share · keyword-derived product groups</p></div><span className="tag"><i/> Product mix</span></div><div className="category-layout"><div className="category-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={analytics?.category_contributions || []} dataKey="revenue" nameKey="Category" innerRadius={54} outerRadius={79} paddingAngle={2} stroke="none">{(analytics?.category_contributions || []).map((_:any,i:number)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip formatter={(v:any)=>[money(v),'Revenue']}/></PieChart></ResponsiveContainer></div><div className="category-legend">{(analytics?.category_contributions || []).map((row:any,i:number)=><div key={row.Category}><i style={{background:COLORS[i%COLORS.length]}}/><span>{row.Category}</span><b>{money(row.revenue)}</b></div>)}</div></div></div>
+            <div className="panel analytical-panel"><div className="panel-head"><div><h2>Monthly sales by category</h2><p>Revenue across estimated product groups</p></div><span className="tag"><i/> Monthly</span></div><div className="analysis-chart category-trend"><ResponsiveContainer width="100%" height="100%"><AreaChart data={analytics?.stacked_category_monthly || []} margin={{left:0,right:10,top:12,bottom:0}}><CartesianGrid stroke="#edf0f5" vertical={false}/><XAxis dataKey="Month" tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><YAxis tickFormatter={v=>`£${Math.round(v/1000)}k`} tickLine={false} axisLine={false} tick={{fill:'#8991a4',fontSize:9}}/><Tooltip formatter={(v:any)=>[money(v),'Revenue']}/><Legend iconType="circle" wrapperStyle={{fontSize:9}}/>{(analytics?.category_contributions || []).map((row:any,i:number)=><Area key={row.Category} type="monotone" dataKey={row.Category} name={row.Category} stackId="1" stroke={COLORS[i%COLORS.length]} fill={COLORS[i%COLORS.length]} fillOpacity={.72}/>)}</AreaChart></ResponsiveContainer></div></div>
+          </section>
+          <section className="panel country-table-panel"><div className="panel-head"><div><h2>Market performance</h2><p>Revenue, order count, and average order value by country</p></div></div><div className="table-scroll"><table><thead><tr><th>Country</th><th>Revenue</th><th>Orders</th><th>Customers</th><th>Average order value</th><th>Items sold</th></tr></thead><tbody>{(analytics?.country_matrix || []).slice(0,10).map((row:any)=><tr key={row.Country}><td className="strong">{row.Country}</td><td>{money(row.revenue)}</td><td>{Number(row.orders).toLocaleString()}</td><td>{Number(row.customers).toLocaleString()}</td><td>{money(row.aov)}</td><td>{Number(row.items_sold).toLocaleString()}</td></tr>)}</tbody></table></div></section>
+          <div className="footnote"><span>Dataset: UCI Online Retail</span><span>Customer behavior analytics · historical data</span></div>
+        </>}
+        {!loading && tab === 'basket' && <><div className="page-heading"><div><div className="eyebrow">PRODUCT DISCOVERY</div><h1>Basket analysis<span className="period-dot">.</span></h1><p>Compare frequent-itemset approaches and discover products often bought together.</p></div><span className="context-badge"><Boxes size={15}/> 2 mining algorithms + comparison</span></div><div className="algorithm-switch"><button className={algorithm==='apriori'?'selected':''} onClick={()=>{setAlgorithm('apriori');setRecommendations([]);setComparison(null)}}><span className="algo-icon purple"><Boxes size={17}/></span><span><b>Apriori</b><small>Precomputed rules</small></span></button><button className={algorithm==='fpgrowth'?'selected':''} onClick={()=>{setAlgorithm('fpgrowth');setRecommendations([]);setComparison(null)}}><span className="algo-icon blue"><Sparkles size={17}/></span><span><b>FP-Growth</b><small>Live FP-tree mining</small></span></button><button className={algorithm==='compare'?'selected':''} onClick={()=>{setAlgorithm('compare');setRecommendations([]);setComparison(null)}}><span className="algo-icon green"><Activity size={17}/></span><span><b>Compare both</b><small>Same inputs</small></span></button><div className="algo-explain">{algorithm==='apriori'?'Filters the saved Apriori rule set for your basket and thresholds. FP-Growth mines transaction data at request time.':'FP-Growth builds an FP-tree from real invoice baskets and mines without candidate generation. Compare runs both on the same basket and thresholds.'}</div></div><div className="basket-layout"><div className="panel basket-panel"><div className="panel-head"><div><h2>Build a sample basket</h2><p>Search the product catalog and select items</p></div><ShoppingBasket className="head-icon"/></div><div className="search-wrap"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search products, e.g. candle holder"/><kbd>⌘ K</kbd>{matches.length>0&&<div className="suggestions">{matches.map(p=><button key={p} onClick={()=>add(p)}>{p}<span>+ Add</span></button>)}</div>}</div><div className="basket-items">{basket.length===0?<div className="basket-empty"><ShoppingBasket size={24}/><span>Your basket is empty</span><small>Search above to add products</small></div>:basket.map(item=><div className="basket-item" key={item}><span className="product-square"><PackageSearch size={17}/></span><span>{item}</span><button onClick={()=>remove(item)} aria-label="Remove"><X size={16}/></button></div>)}</div><div className="basket-actions"><span>{basket.length} selected</span><button className="button-primary" onClick={recommend} disabled={!basket.length||busy}>{busy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} Find complementary items</button></div><div className="slider-wrap"><label>Minimum confidence <b>{(minConfidence*100).toFixed(0)}%</b></label><input type="range" min="0.05" max="0.8" step="0.05" value={minConfidence} onChange={e=>setMinConfidence(Number(e.target.value))}/><div><span>5%</span><span>80%</span></div></div></div><div className="panel method-panel"><div className="panel-head"><div><h2>How it works</h2><p>Interpretable product relationships</p></div><CircleHelp size={17} className="head-icon"/></div><div className="method-step"><span>01</span><div><b>Find co-purchases</b><p>The selected algorithm searches historical transactions for item combinations.</p></div></div><div className="method-step"><span>02</span><div><b>Generate rules</b><p>Rules are ranked by support, confidence, and lift to describe useful patterns.</p></div></div><div className="method-step"><span>03</span><div><b>Review suggestions</b><p>Recommendations describe association in this dataset, not causation.</p></div></div><div className="metric-def"><b>Confidence</b><span>Among baskets containing the selected item(s), the share that also contain the recommendation.</span></div><div className="metric-def"><b>Support</b><span>Share of all baskets containing the complete item combination.</span></div></div></div><div className="results-head"><div><h2>Recommended pairings</h2><p>{comparison?'Side-by-side results on the same basket and thresholds':recommendations.length?`Results using ${algorithm==='apriori'?'Apriori':'FP-Growth'}`:'Run the analysis to see complementary products'}</p></div></div>{comparison?<div className="comparison-grid">{['apriori','fpgrowth'].map(key=>{const rows=comparison[key]||[];return <section className="panel comparison-panel" key={key}><div className="panel-head"><div><h2>{key==='apriori'?'Apriori · saved rules':'FP-Growth · live mining'}</h2><p>{rows.length} recommendations meet these thresholds</p></div></div>{rows.length?rows.slice(0,5).map((r:any,i:number)=><div className="compare-rule" key={i}><b>{r.recommended_product}</b><span>Confidence {(r.confidence*100).toFixed(1)}% · Support {(r.support*100).toFixed(2)}% · Lift {Number(r.lift).toFixed(2)}×</span><small>{r.matched_rule}</small></div>):<div className="empty-results compact-empty">No rules matched the selected thresholds.</div>}</section>})}</div>:recommendations.length>0?<div className="recommend-grid">{recommendations.map((r,i)=><div className="recommend-card" key={`${r.matched_rule}-${i}`}><div className="recommend-rank">PAIRING {String(i+1).padStart(2,'0')}</div><h3>{r.recommended_product}</h3><p>{r.explanation}</p><div className="metric-pills"><span>Confidence <b>{(r.confidence*100).toFixed(1)}%</b></span><span>Support <b>{(r.support*100).toFixed(2)}%</b></span>{r.lift&&<span>Lift <b>{Number(r.lift).toFixed(2)}×</b></span>}</div><code>{r.matched_rule}</code></div>)}</div>:<div className="empty-results"><Sparkles size={22}/><span>No recommendations to show yet</span><small>Add one or more products, then run basket analysis.</small></div>}</>}
+        {!loading && tab === 'customers' && <><div className="page-heading"><div><div className="eyebrow">CUSTOMER INTELLIGENCE</div><h1>Customer segments<span className="period-dot">.</span></h1><p>K-Means groups customers using their recency, order frequency, and monetary value.</p></div><span className="context-badge"><Users size={15}/> {customers.length.toLocaleString()} customers</span></div><div className="segment-cards">{Object.entries(analytics?.cluster_distribution||{}).map(([name,count],i)=><button className={`segment-card ${segment===name?'chosen':''}`} key={name} onClick={()=>setSegment(segment===name?'All':name)}><i style={{background:COLORS[i%COLORS.length]}}/><span>{name}</span><b>{Number(count).toLocaleString()}</b><small>customers · {customers.length?((Number(count)/customers.length)*100).toFixed(1):0}%</small></button>)}</div><div className="panel table-panel"><div className="panel-head"><div><h2>Customer profiles</h2><p>RFM values and assigned segment</p></div><button className="filter-button" onClick={()=>setSegment('All')}><Filter size={14}/>{segment==='All'?'All segments':'Clear filter'}</button></div><div className="table-scroll"><table><thead><tr><th>Customer ID</th><th>Segment</th><th>Recency</th><th>Frequency</th><th>Monetary value</th></tr></thead><tbody>{filteredCustomers.slice(0,100).map(c=><tr key={c.CustomerID}><td className="strong">{c.CustomerID}</td><td><span className="segment-pill"><i style={{background:COLORS[Number(c.Cluster)%COLORS.length]}}/>{c.Segment_Name}</span></td><td>{c.Recency} days</td><td>{c.Frequency} orders</td><td>{money(c.Monetary)}</td></tr>)}</tbody></table></div><div className="table-foot">Showing {Math.min(100,filteredCustomers.length)} of {filteredCustomers.length.toLocaleString()} customers</div></div></>}
+        {!loading && tab === 'rules' && <><div className="page-heading"><div><div className="eyebrow">ASSOCIATION DISCOVERY</div><h1>Association rules<span className="period-dot">.</span></h1><p>Explore product relationships discovered by Apriori in historical baskets.</p></div><span className="context-badge"><Boxes size={15}/> {rules.length.toLocaleString()} rules</span></div><div className="panel table-panel"><div className="panel-head"><div><h2>Discovered relationships</h2><p>Ranked by lift · Apriori output</p></div><div className="table-search"><Search size={15}/><input placeholder="Find a product" value={ruleSearch} onChange={e=>setRuleSearch(e.target.value)}/></div></div><div className="table-scroll"><table><thead><tr><th>When basket includes</th><th>Often includes</th><th>Support</th><th>Confidence</th><th>Lift</th></tr></thead><tbody>{filteredRules.map((r,i)=><tr key={i}><td>{r.antecedents}</td><td className="strong">{r.consequents}</td><td>{(Number(r.support)*100).toFixed(2)}%</td><td>{(Number(r.confidence)*100).toFixed(1)}%</td><td><span className="lift-pill">{Number(r.lift).toFixed(2)}×</span></td></tr>)}</tbody></table></div><div className="table-foot">Showing {filteredRules.length} matching rules</div></div></>}
+        <footer className="app-footer"><span>BasketIQ · Retail intelligence</span><span>Historical associations are descriptive, not causal.</span></footer>
       </div>
-    </div>
-  );
+    </main>
+  </div>;
 }
+
+function Kpi({label,value,sub,icon,tone}:{label:string;value:string;sub:string;icon:React.ReactNode;tone:string}) { return <div className="kpi-card"><div className={`kpi-icon ${tone}`}>{icon}</div><div className="kpi-label">{label}</div><div className="kpi-value">{value||'—'}</div><div className="kpi-sub">{sub}</div></div>; }
+export default App;

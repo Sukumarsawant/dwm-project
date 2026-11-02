@@ -1,59 +1,67 @@
-# E-Commerce Customer Analytics & Personalized Recommendation System
+# BasketIQ
 
-Complete full-stack implementation using **K-Means Clustering** (for RFM customer segmentation) and **Apriori Algorithm** (for market basket association rule recommendations).
+BasketIQ is a retail analytics product built around the UCI Online Retail dataset. It combines an executive dashboard, product-pair discovery, and RFM customer segmentation in one responsive application.
 
----
+## Data mining methods
 
-## 📊 Dataset & Preprocessing Pipeline Summary
+- **Apriori** mines frequent itemsets level by level and powers the saved association-rule catalogue.
+- **FP-Growth** mines frequent patterns through an FP-tree and can generate basket recommendations from the cleaned invoice data.
+- **K-Means** segments customers using recency, purchase frequency, and monetary value (RFM).
 
-- **Raw Dataset**: UCI Online Retail (`541,909` rows)
-- **Duplicates Removed**: `5,268`
-- **Cancelled Invoices Removed**: `9,251`
-- **Invalid Quantities Removed**: `1,336`
-- **Invalid Prices Removed**: `1,176`
-- **Missing Customer IDs Removed**: `132,186`
-- **Cleaned Dataset**: **`392,692` records**
-- **Unique Customers**: `4,338`
-- **Unique Products**: `3,665`
-- **Total Revenue**: `£8,887,208.89`
+Apriori and FP-Growth address association discovery; K-Means addresses customer segmentation. Their outputs answer different questions and are not direct substitutes.
 
----
+## Run locally
 
-## 🧠 Data Mining Models
+Use two terminals from the project directory.
 
-### 1. K-Means Customer Segmentation ($K=4$)
-Features engineered via RFM (Recency, Frequency, Monetary) with `log1p` transformation & `StandardScaler`.
-- **Cluster 0: VIP / High-Value Champions** — Recency: 12.2 days | Frequency: 13.8 orders | Spend: £8,088.02 | Count: 713
-- **Cluster 1: Lost / Inactive Customers** — Recency: 181.5 days | Frequency: 1.3 orders | Spend: £341.00 | Count: 1,622
-- **Cluster 2: New / Recent Customers** — Recency: 17.7 days | Frequency: 2.2 orders | Spend: £557.32 | Count: 837
-- **Cluster 3: Loyal Regular Customers** — Recency: 71.6 days | Frequency: 4.1 orders | Spend: £1,801.78 | Count: 1,166
+### Terminal 1: backend
 
-### 2. Apriori Association Rule Engine
-- **Frequent Itemsets**: `442` itemsets generated ($min\_support = 0.015$)
-- **Association Rules**: `190` rules derived ($lift \ge 1.2$)
-
----
-
-## 🚀 How to Run the Application Locally
-
-### 1. Backend Setup (Express + Python Bridge)
-```bash
+```powershell
 cd backend
 npm install
+python -m pip install -r requirements.txt
 node server.js
 ```
-The Express backend will start on **`http://localhost:5000`**.
 
-Available Endpoints:
-- `GET /api/analytics` — Global dataset and cluster stats
-- `GET /api/customers` — Customer RFM list with cluster labels
-- `GET /api/customers/:id` — Detailed profile & purchase history
-- `GET /api/customers/:id/recommendations` — Personalized top-5 Apriori recommendations
-- `GET /api/rules` — Apriori association rules table
+The API starts at `http://localhost:5000`. If `python` is not the command for your installation, set `PYTHON_PATH` to the Python executable before starting Node:
 
-### 2. Frontend Setup (React Dashboard)
-```bash
+```powershell
+$env:PYTHON_PATH = 'C:\path\to\python.exe'
+node server.js
+```
+
+### Terminal 2: dashboard
+
+```powershell
 cd frontend
+npm install
 npm start
 ```
-The React Analytics Dashboard will launch on **`http://localhost:3000`**.
+
+Open `http://localhost:3000`.
+
+## Dataset and artifacts
+
+The app reads the cleaned transactions from `data/cleaned_online_retail.csv` and trained/catalog artifacts from `models/`. The original input workbook is under `online+retail/`. Customer cluster labels and association rules are precomputed so the dashboard does not retrain K-Means on every page load. FP-Growth recommendation requests mine the transaction matrix at request time.
+
+## Main API routes
+
+- `GET /api/analytics` — sales, product, and customer metrics for the dashboard
+- `GET /api/customers` — customer RFM values and K-Means segment labels
+- `GET /api/rules` — precomputed Apriori association rules
+- `GET /api/products?query=...` — product search
+- `POST /api/recommend` — basket recommendations; set `algorithm` to `apriori` or `fpgrowth`
+
+Example request body:
+
+```json
+{
+  "products": ["WHITE HANGING HEART T-LIGHT HOLDER"],
+  "algorithm": "fpgrowth",
+  "min_support": 0.003,
+  "min_confidence": 0.15,
+  "top_n": 10
+}
+```
+
+Association rules describe co-purchases in the historical dataset. They do not establish that one product causes the purchase of another.

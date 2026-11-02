@@ -16,6 +16,11 @@ function runPython(args) {
         const pyProcess = spawn(PYTHON_PATH, [SCRIPT_PATH, ...args]);
         let output = '';
         let errorOutput = '';
+        const timeoutMs = args[0] === 'recommend_basket' && /fpgrowth|fp-growth|compare/i.test(String(args[1] || '')) ? 180000 : 60000;
+        const timeout = setTimeout(() => {
+            pyProcess.kill();
+            reject(new Error(`Python task timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
+        }, timeoutMs);
 
         pyProcess.stdout.on('data', (data) => {
             output += data.toString();
@@ -26,6 +31,7 @@ function runPython(args) {
         });
 
         pyProcess.on('close', (code) => {
+            clearTimeout(timeout);
             if (code !== 0) {
                 return reject(new Error(`Python process exited with code ${code}: ${errorOutput}`));
             }
@@ -75,9 +81,13 @@ app.get('/api/marketplace', async (req, res) => {
     }
 });
 
-// POST /api/recommend (Pure Apriori Basket Recommendation)
+// POST /api/recommend (precomputed Apriori, live FP-Growth, or both for comparison)
 app.post('/api/recommend', async (req, res) => {
     try {
+        const algorithm = String(req.body?.algorithm || 'apriori').toLowerCase();
+        if (!['apriori', 'fpgrowth', 'fp-growth', 'compare'].includes(algorithm)) {
+            return res.status(400).json({ success: false, error: 'algorithm must be apriori, fpgrowth, or compare' });
+        }
         const payload = JSON.stringify(req.body);
         const data = await runPython(['recommend_basket', payload]);
         res.json({ success: true, recommendations: data });
